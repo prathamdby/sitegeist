@@ -2,10 +2,12 @@ import { Badge } from "@mariozechner/mini-lit/dist/Badge.js";
 import { DialogContent, DialogHeader } from "@mariozechner/mini-lit/dist/Dialog.js";
 import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import i18n from "@mariozechner/mini-lit/dist/i18n.js";
-import { formatUsage, getAppStorage, type SessionData, type SessionMetadata } from "@mariozechner/pi-web-ui";
+import { formatUsage } from "@mariozechner/pi-web-ui";
 import Fuse from "fuse.js";
 import { html } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { getAppStorage } from "../storage/app-storage.js";
+import type { SessionData, SessionMetadata } from "../storage/types.js";
 import * as port from "../utils/port.js";
 
 type ExportedSession = {

@@ -9,7 +9,6 @@ import {
 	ProxyTab,
 	SettingsDialog,
 	// PersistentStorageDialog,
-	setAppStorage,
 	setShowJsonMode,
 } from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
@@ -46,7 +45,7 @@ import { getModel, getModels, getProviders, ModelConfiguration } from "./pi/mode
 import { selectionRequiredModel } from "./pi/selection.js";
 import { createStreamFn } from "./pi/stream.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
-import { SitegeistAppStorage } from "./storage/app-storage.js";
+import { SitegeistAppStorage, setAppStorage } from "./storage/app-storage.js";
 import { DebuggerTool } from "./tools/debugger.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
 import { AskUserWhichElementTool, skillTool } from "./tools/index.js";

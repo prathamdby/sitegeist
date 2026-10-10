@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { storageBridge } from "./storage-bridge.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const result = await build({
+	plugins: [storageBridge(root)],
 	absWorkingDir: root,
 	entryPoints: ["src/sidepanel.ts", "src/debug.ts", "src/background.ts"],
 	bundle: true,
@@ -29,6 +31,11 @@ const legacy = inputs.filter((path) =>
 	/(?:node_modules\/@mariozechner\/pi-(?:ai|agent-core)\/|pi-mono\/packages\/(?:ai|agent)\/)/.test(path),
 );
 assert.deepEqual(legacy, [], "Legacy SDK implementations must not enter the browser bundle");
+assert.deepEqual(
+	inputs.filter((path) => /pi-(?:mono\/packages\/web-ui|web-ui)\/(?:dist|src)\/storage\//.test(path)),
+	[],
+	"Legacy storage implementations must not enter the browser bundle",
+);
 assert.ok(inputs.some((path) => path.includes("@earendil-works/pi-agent-core/dist/agent.js")));
 assert.ok(inputs.some((path) => path.includes("@earendil-works/pi-ai/dist/models.js")));
 console.log(`Browser bundle verified: ${inputs.length} inputs, zero legacy SDK implementations.`);

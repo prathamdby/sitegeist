@@ -1,12 +1,11 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { icon } from "@mariozechner/mini-lit/dist/icons.js";
 import { Switch } from "@mariozechner/mini-lit/dist/Switch.js";
-import { setAppStorage } from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
 import { ArrowLeft, Bug, MousePointer2, Play, Sparkles } from "lucide";
 import { getModel } from "./pi/models.js";
 import "./debug/ReplPanel.js";
-import { SitegeistAppStorage } from "./storage/app-storage.js";
+import { SitegeistAppStorage, setAppStorage } from "./storage/app-storage.js";
 import { askUserWhichElementTool } from "./tools/ask-user-which-element.js";
 
 interface TestPrompt {
