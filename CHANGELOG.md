@@ -5,6 +5,7 @@
 ### Changed
 
 - Migrated the agent runtime and model/auth registry to `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` 1.1.0, retaining the existing UI and stored data formats.
+- Replaced the web-ui storage implementation with application-owned persistence while retaining the version-3 database and rollback-compatible records.
 
 ### Removed
 

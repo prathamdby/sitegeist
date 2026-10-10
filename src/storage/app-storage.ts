@@ -1,70 +1,67 @@
-import {
-	AppStorage as BaseAppStorage,
-	CustomProvidersStore,
-	getAppStorage,
-	IndexedDBStorageBackend,
-	ProviderKeysStore,
-	SessionsStore,
-	SettingsStore,
-} from "@mariozechner/pi-web-ui";
+import { IndexedDBStorageBackend } from "./backends/indexeddb-storage-backend.js";
+import { SessionsStore } from "./stores/base-sessions-store.js";
 import { CostStore } from "./stores/cost-store.js";
+import { CustomProvidersStore } from "./stores/custom-providers-store.js";
+import { ProviderKeysStore } from "./stores/provider-keys-store.js";
 import { SitegeistSessionsStore } from "./stores/sessions-store.js";
+import { SettingsStore } from "./stores/settings-store.js";
 import { SkillsStore } from "./stores/skills-store.js";
+import type { StorageBackend } from "./types.js";
 
-/**
- * Extended AppStorage for Sitegeist with skills, memories, and prompts stores.
- */
-export class SitegeistAppStorage extends BaseAppStorage {
+export class AppStorage {
+	constructor(
+		readonly settings: SettingsStore,
+		readonly providerKeys: ProviderKeysStore,
+		readonly sessions: SessionsStore,
+		readonly customProviders: CustomProvidersStore,
+		readonly backend: StorageBackend,
+	) {}
+
+	getQuotaInfo() {
+		return this.backend.getQuotaInfo();
+	}
+	requestPersistence(): Promise<boolean> {
+		return this.backend.requestPersistence();
+	}
+}
+
+export class SitegeistAppStorage extends AppStorage {
 	readonly skills: SkillsStore;
 	readonly costs: CostStore;
 
 	constructor() {
-		// 1. Create all stores (no backend yet)
 		const settings = new SettingsStore();
 		const providerKeys = new ProviderKeysStore();
 		const sessions = new SitegeistSessionsStore();
 		const customProviders = new CustomProvidersStore();
 		const skills = new SkillsStore();
 		const costs = new CostStore();
-
-		// 2. Gather configs from all stores
-		const configs = [
-			settings.getConfig(),
-			SessionsStore.getMetadataConfig(),
-			providerKeys.getConfig(),
-			customProviders.getConfig(),
-			sessions.getConfig(),
-			skills.getConfig(),
-			costs.getConfig(),
-		];
-
-		// 3. Create backend with all configs
+		const stores = [settings, providerKeys, sessions, customProviders, skills, costs];
 		const backend = new IndexedDBStorageBackend({
 			dbName: "sitegeist-storage",
-			version: 3, // Increment version to add custom-providers store
-			stores: configs,
+			version: 3,
+			stores: [SessionsStore.getMetadataConfig(), ...stores.map((store) => store.getConfig())],
 		});
-
-		// 4. Wire backend to all stores
-		settings.setBackend(backend);
-		providerKeys.setBackend(backend);
-		customProviders.setBackend(backend);
-		sessions.setBackend(backend);
-		skills.setBackend(backend);
-		costs.setBackend(backend);
-
-		// 5. Pass base stores to parent
+		for (const store of stores) store.setBackend(backend);
 		super(settings, providerKeys, sessions, customProviders, backend);
-
-		// 6. Store references to sitegeist-specific stores
 		this.skills = skills;
 		this.costs = costs;
 	}
 }
 
-/**
- * Helper to get typed Sitegeist storage.
- */
+let storage: AppStorage | undefined;
+
+export function getAppStorage(): AppStorage {
+	if (!storage) throw new Error("Application storage has not been initialized");
+	return storage;
+}
+
+export function setAppStorage(value: AppStorage): void {
+	storage = value;
+}
+
 export function getSitegeistStorage(): SitegeistAppStorage {
-	return getAppStorage() as SitegeistAppStorage;
+	const value = getAppStorage();
+	if (!(value instanceof SitegeistAppStorage)) throw new Error("Sitegeist storage has not been initialized");
+	return value;
 }

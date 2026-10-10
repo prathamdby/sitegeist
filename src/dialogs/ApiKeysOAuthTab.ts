@@ -1,5 +1,5 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
-import { getAppStorage, SettingsTab } from "@mariozechner/pi-web-ui";
+import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { Toast } from "../components/Toast.js";
 import {
@@ -11,6 +11,7 @@ import {
 	serializeOAuthCredentials,
 } from "../oauth/index.js";
 import { getProviders } from "../pi/models.js";
+import { getAppStorage } from "../storage/app-storage.js";
 
 const OAUTH_PROVIDERS: OAuthProviderId[] = ["anthropic", "openai-codex", "github-copilot"];
 
