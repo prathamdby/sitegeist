@@ -81,17 +81,6 @@ declare module "@mariozechner/mini-lit" {
 		About: string;
 		"AI-powered browser extension for web navigation and interaction": string;
 		"Version:": string;
-		Website: string;
-		Imprint: string;
-		Privacy: string;
-		"Checking for updates...": string;
-		"Update Available": string;
-		"A new version ({version}) is available": string;
-		Update: string;
-		"You're up to date": string;
-		"Update Required": string;
-		"A new version ({version}) is available. Please update to continue.": string;
-		"Update Now": string;
 	}
 }
 
@@ -172,18 +161,6 @@ const sitegeistTranslations = {
 		"AI-powered browser extension for web navigation and interaction":
 			"AI-powered browser extension for web navigation and interaction",
 		"Version:": "Version:",
-		Website: "Website",
-		Imprint: "Imprint",
-		Privacy: "Privacy",
-		"Checking for updates...": "Checking for updates...",
-		"Update Available": "Update Available",
-		"A new version ({version}) is available": "A new version ({version}) is available",
-		Update: "Update",
-		"You're up to date": "You're up to date",
-		"Update Required": "Update Required",
-		"A new version ({version}) is available. Please update to continue.":
-			"A new version ({version}) is available. Please update to continue.",
-		"Update Now": "Update Now",
 	},
 	de: {
 		"Permission request failed": "Berechtigungsanfrage fehlgeschlagen",
@@ -263,18 +240,6 @@ const sitegeistTranslations = {
 		"AI-powered browser extension for web navigation and interaction":
 			"KI-gestützte Browser-Erweiterung für Webnavigation und -interaktion",
 		"Version:": "Version:",
-		Website: "Webseite",
-		Imprint: "Impressum",
-		Privacy: "Datenschutz",
-		"Checking for updates...": "Suche nach Updates...",
-		"Update Available": "Update verfügbar",
-		"A new version ({version}) is available": "Eine neue Version ({version}) ist verfügbar",
-		Update: "Aktualisieren",
-		"You're up to date": "Sie sind auf dem neuesten Stand",
-		"Update Required": "Update erforderlich",
-		"A new version ({version}) is available. Please update to continue.":
-			"Eine neue Version ({version}) ist verfügbar. Bitte aktualisieren Sie, um fortzufahren.",
-		"Update Now": "Jetzt aktualisieren",
 	},
 };
 

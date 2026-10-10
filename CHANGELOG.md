@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- Removed the marketing site, site-specific development and deployment tooling, and website-backed extension update links.
+
 ## [1.0.0] - 2026-03-15
 
 ### Added
