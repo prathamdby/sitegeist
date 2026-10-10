@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createAssistantMessageEventStream, getCurrentTools, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { browserMessageTransformer } from "../src/messages/message-transformer.ts";
 import { Agent, executableTool } from "../src/pi/agent.ts";
 import { CostRecorder } from "../src/pi/costs.ts";
-import { getModel } from "../src/pi/models.ts";
+import { getModel, ModelConfiguration } from "../src/pi/models.ts";
 import { selectionRequiredModel } from "../src/pi/selection.ts";
 
 const model = getModel("openai", "gpt-4o-mini");
@@ -95,14 +95,23 @@ test("new agent preserves the prompt and tool declarations through the browser c
 		assert.equal(tools[0].name, "echo");
 		assert.equal(tools[0].parameters.properties.text.type, "string");
 	}
-	assert.deepEqual(executed, [["one", "first"], ["two", "second"]]);
+	assert.deepEqual(executed, [
+		["one", "first"],
+		["two", "second"],
+	]);
 	assert.equal(events.filter((event) => event === "tool_execution_end").length, 2);
 	assert.equal(events.at(-1), "agent_end");
 	assert.equal(agent.state.isStreaming, false);
 });
 
 test("converter retains system deltas and converts image/document attachments", async () => {
-	const system = { role: "system", content: "prompt", sections: { policy: "same policy" }, toolsRemoved: [], timestamp: 0 };
+	const system = {
+		role: "system",
+		content: "prompt",
+		sections: { policy: "same policy" },
+		toolsRemoved: [],
+		timestamp: 0,
+	};
 	const converted = await browserMessageTransformer([
 		system,
 		{ role: "welcome", tutorials: [] },
@@ -151,16 +160,22 @@ test("costs are attributed to the response and consumed only once; restored hist
 	const fresh = assistant([{ type: "text", text: "New response" }]);
 	assert.deepEqual(recorder.take(fresh), { provider: model.provider, model: model.id, cost: 0.3 });
 	assert.equal(recorder.take(fresh), undefined);
+	assert.equal(recorder.take({ ...fresh, usage: undefined }), undefined);
+	assert.equal(recorder.take({ ...fresh, usage: { ...fresh.usage, cost: undefined } }), undefined);
 });
 
 test("a missing model asks for selection without sending, changing providers, or losing saved messages", async () => {
 	const messages = [{ role: "user", content: "Saved conversation", timestamp: 1 }];
 	const agent = new Agent({
 		initialState: { model: selectionRequiredModel, messages },
-		streamFn: () => { throw new Error("A missing selection must never dispatch"); },
+		streamFn: () => {
+			throw new Error("A missing selection must never dispatch");
+		},
 	});
 	let selections = 0;
-	agent.onModelRequired = () => { selections++; };
+	agent.onModelRequired = () => {
+		selections++;
+	};
 	await agent.prompt("Tutorial prompt");
 	await agent.continue();
 	assert.equal(selections, 2);
@@ -169,10 +184,56 @@ test("a missing model asks for selection without sending, changing providers, or
 	assert.equal(agent.state.isStreaming, false);
 });
 
+test("an existing agent refreshes a custom route and its credential before each request", async () => {
+	const custom = {
+		...model,
+		provider: "custom-fixture",
+		api: "openai-completions",
+		baseUrl: "https://original.invalid/v1",
+	};
+	let providers = [
+		{
+			id: "custom-id",
+			name: custom.provider,
+			type: custom.api,
+			baseUrl: custom.baseUrl,
+			apiKey: "original-fixture-key",
+			models: [custom],
+		},
+	];
+	const configuration = new ModelConfiguration(async () => providers);
+	const requests = [];
+	const agent = new Agent({
+		initialState: { model: custom },
+		prepareRequest: async ({ model }) => ({ model: await configuration.resolveModel(model) }),
+		getApiKey: async (provider) => (await configuration.getProvider(provider))?.apiKey,
+		streamFn: (selected, _context, options) => {
+			requests.push([selected.provider, selected.baseUrl, options.apiKey]);
+			return response({
+				...assistant([{ type: "text", text: "Fixture answer" }]),
+				provider: selected.provider,
+				model: selected.id,
+				api: selected.api,
+			});
+		},
+	});
+	await agent.prompt("First request");
+	providers = [
+		{ ...providers[0], apiKey: "edited-fixture-key", models: [{ ...custom, baseUrl: "https://edited.invalid/v1" }] },
+	];
+	await agent.prompt("Second request");
+	assert.deepEqual(requests, [
+		[custom.provider, "https://original.invalid/v1", "original-fixture-key"],
+		[custom.provider, "https://edited.invalid/v1", "edited-fixture-key"],
+	]);
+});
+
 test("abort reaches the running tool and settles the new agent without another network dispatch", async () => {
 	let calls = 0;
 	let started;
-	const toolStarted = new Promise((resolve) => { started = resolve; });
+	const toolStarted = new Promise((resolve) => {
+		started = resolve;
+	});
 	const agent = new Agent({
 		initialState: { model, systemPrompt: "Cancellation fixture" },
 		convertToLlm: browserMessageTransformer,
@@ -184,16 +245,19 @@ test("abort reaches the running tool and settles the new agent without another n
 			return response(assistant([{ type: "toolCall", id: "wait", name: "wait", arguments: {} }], "toolUse"));
 		},
 	});
-	agent.setTools([executableTool({
-		name: "wait",
-		label: "Wait",
-		description: "Wait for cancellation",
-		parameters: Type.Object({}),
-		execute: (_id, _args, signal) => new Promise((_resolve, reject) => {
-			started();
-			signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+	agent.setTools([
+		executableTool({
+			name: "wait",
+			label: "Wait",
+			description: "Wait for cancellation",
+			parameters: Type.Object({}),
+			execute: (_id, _args, signal) =>
+				new Promise((_resolve, reject) => {
+					started();
+					signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+				}),
 		}),
-	})]);
+	]);
 	const running = agent.prompt("Wait");
 	await toolStarted;
 	agent.abort();

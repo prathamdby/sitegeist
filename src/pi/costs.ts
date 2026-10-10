@@ -8,7 +8,7 @@ export class CostRecorder {
 	}
 
 	take(message: AgentMessage): { provider: string; model: string; cost: number } | undefined {
-		if (message.role !== "assistant" || !(message.usage.cost.total > 0) || this.recorded.has(message)) {
+		if (message.role !== "assistant" || !(message.usage?.cost?.total > 0) || this.recorded.has(message)) {
 			return undefined;
 		}
 		this.recorded.add(message);

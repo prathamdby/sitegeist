@@ -14,6 +14,7 @@ import {
 } from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
 import { History, Plus, Settings } from "lucide";
+import { Toast } from "./components/Toast.js";
 import { AboutTab } from "./dialogs/AboutTab.js";
 import { ApiKeyOrOAuthDialog } from "./dialogs/ApiKeyOrOAuthDialog.js";
 import { ApiKeysOAuthTab } from "./dialogs/ApiKeysOAuthTab.js";
@@ -41,7 +42,7 @@ import {
 	executableTool,
 } from "./pi/agent.js";
 import { CostRecorder } from "./pi/costs.js";
-import { getModel, getModels, getProviders, isRemovedProvider, rehydrateModel } from "./pi/models.js";
+import { getModel, getModels, getProviders, ModelConfiguration } from "./pi/models.js";
 import { selectionRequiredModel } from "./pi/selection.js";
 import { createStreamFn } from "./pi/stream.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
@@ -84,6 +85,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ============================================================================
 const storage = new SitegeistAppStorage();
 setAppStorage(storage);
+const modelConfiguration = new ModelConfiguration(() => storage.customProviders.getAll());
 
 // ============================================================================
 // APP STATE
@@ -169,14 +171,10 @@ async function getProvidersWithKeys(): Promise<string[]> {
 		const key = await storage.providerKeys.get(provider);
 		if (key && getProviders().includes(provider)) result.push(provider);
 	}
-	for (const provider of await storage.customProviders.getAll()) {
-		if (
-			!isRemovedProvider(provider.id) &&
-			!isRemovedProvider(provider.name) &&
-			!getProviders().includes(provider.id) &&
-			!result.includes(provider.name)
-		)
-			result.push(provider.name);
+	for (const provider of await modelConfiguration.getProviders()) {
+		for (const id of [provider.id, provider.name]) {
+			if (!getProviders().includes(id) && !result.includes(id)) result.push(id);
+		}
 	}
 	return result;
 }
@@ -358,10 +356,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 	const savedModel = initialState ? initialState.model : await storage.settings.get<unknown>("lastUsedModel");
 	const hasSavedSelection = initialState !== undefined || (savedModel !== undefined && savedModel !== null);
-	const customProviders = await storage.customProviders.getAll();
-	const customModels = customProviders.flatMap((provider) => provider.models ?? []);
-	const customProviderIds = customProviders.flatMap((provider) => [provider.id, provider.name]);
-	let defaultModel = rehydrateModel(savedModel, customModels, customProviderIds);
+	let defaultModel = await modelConfiguration.resolveModel(savedModel);
 	if (!hasSavedSelection) {
 		for (const provider of await getProvidersWithKeys()) {
 			const modelId = DEFAULT_MODELS[provider];
@@ -381,13 +376,18 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		},
 		convertToLlm: browserMessageTransformer,
 		toolExecution: "sequential",
+		prepareRequest: async ({ model }) => {
+			const resolved = await modelConfiguration.resolveModel(model);
+			if (!resolved) throw new Error("The selected model is no longer configured. Select a model again.");
+			return { model: resolved };
+		},
 		streamFn: createStreamFn(async () => {
 			const enabled = await storage.settings.get<boolean>("proxy.enabled");
 			if (!enabled) return undefined;
 			return (await storage.settings.get<string>("proxy.url")) || undefined;
 		}),
 		getApiKey: async (provider: string) => {
-			const customProvider = customProviders.find((entry) => entry.id === provider || entry.name === provider);
+			const customProvider = await modelConfiguration.getProvider(provider);
 			const stored = (await storage.providerKeys.get(provider)) ?? customProvider?.apiKey;
 			if (!stored) return undefined;
 			const proxyEnabled = await storage.settings.get<boolean>("proxy.enabled");
@@ -458,7 +458,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 				chatPanel.agentInterface?.onModelSelect?.();
 				return false;
 			}
-			if (customProviderIds.includes(provider)) return true;
+			if (await modelConfiguration.getProvider(provider)) return true;
 			return await ApiKeyOrOAuthDialog.prompt(provider);
 		},
 		onModelSelect: async () => {
@@ -469,9 +469,12 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			}
 			ModelSelector.open(
 				agent.state.model,
-				(model) => {
-					const resolved = rehydrateModel(model, customModels, customProviderIds);
-					if (!resolved) return;
+				async (model) => {
+					const resolved = await modelConfiguration.resolveModel(model);
+					if (!resolved) {
+						Toast.error("That model is no longer configured. Select another model.");
+						return;
+					}
 					agent.setModel(resolved);
 					storage.settings.set("lastUsedModel", resolved).catch(() => {});
 					chatPanel.agentInterface?.requestUpdate();

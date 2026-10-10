@@ -7,10 +7,11 @@ import {
 	getModel,
 	getModels,
 	getProviders,
+	ModelConfiguration,
 	modelsAreEqual,
 	rehydrateModel,
-	streamSimple,
 	StringEnum,
+	streamSimple,
 } from "../src/pi/models.js";
 
 const custom = {
@@ -107,7 +108,14 @@ test("saved built-in models are rehydrated by provider and ID, not old embedded 
 test("removed selections never change billing route or use supplied custom definitions", () => {
 	for (const provider of ["google-gemini-cli", "google-antigravity"]) {
 		const removed = { ...custom, provider };
-		assert.equal(rehydrateModel(removed, [removed], [provider]), undefined);
+		assert.equal(
+			rehydrateModel(
+				removed,
+				[removed],
+				[{ id: provider, name: provider, type: "ollama", baseUrl: custom.baseUrl }],
+			),
+			undefined,
+		);
 		assert.equal(getModel(provider, removed.id), undefined);
 	}
 	for (const saved of [undefined, null, "bad", {}, { provider: 1, id: "model" }]) {
@@ -115,21 +123,69 @@ test("removed selections never change billing route or use supplied custom defin
 	}
 });
 
-test("custom rehydration preserves the configured provider, URL, headers, and compatibility fields", () => {
+test("custom rehydration uses current configured routes without mutating saved definitions", () => {
 	assert.deepEqual(rehydrateModel(custom, [custom]), { ...custom, type: undefined });
-	assert.deepEqual(rehydrateModel({ ...custom, baseUrl: "https://saved-route.invalid/v1" }, [custom]), {
+	const saved = { ...custom, baseUrl: "https://saved-route.invalid/v1", headers: { "x-stale-route": "old" } };
+	const before = structuredClone(saved);
+	assert.deepEqual(rehydrateModel(saved, [custom]), {
 		...custom,
-		baseUrl: "https://saved-route.invalid/v1",
 		type: undefined,
 	});
-	const restored = rehydrateModel(custom, [], [custom.provider]);
-	assert.deepEqual(restored, { ...custom, type: undefined });
+	assert.deepEqual(saved, before);
+	const configured = { id: custom.provider, name: custom.provider, type: "ollama", baseUrl: "http://localhost:11434" };
+	const restored = rehydrateModel(saved, [], [configured]);
+	assert.deepEqual(restored, {
+		...custom,
+		baseUrl: "http://localhost:11434/v1",
+		api: "openai-completions",
+		headers: undefined,
+		compat: undefined,
+		type: undefined,
+	});
 	assert.equal(restored?.provider, custom.provider);
 	assert.equal(rehydrateModel(custom), undefined);
 	assert.equal(rehydrateModel(custom, [{ ...custom, provider: "another-route" }]), undefined);
-	assert.equal(rehydrateModel({ ...custom, api: "unknown-api" }, [], [custom.provider]), undefined);
-	assert.equal(rehydrateModel({ ...custom, headers: { bad: 1 } }, [], [custom.provider]), undefined);
-	assert.equal(rehydrateModel({ ...custom, maxTokens: -1 }, [], [custom.provider]), undefined);
+	assert.equal(rehydrateModel(custom, [], [{ ...configured, type: "openai-completions" }]), undefined);
+	assert.equal(rehydrateModel({ ...custom, maxTokens: -1 }, [], [configured]), undefined);
+	for (const live of [
+		{ ...custom, api: "unknown-api" },
+		{ ...custom, headers: { bad: 1 } },
+		{ ...custom, headers: { "bad\nheader": "bad" } },
+		{ ...custom, baseUrl: "javascript:alert(1)" },
+	]) {
+		assert.equal(rehydrateModel(custom, [live]), undefined);
+	}
+});
+
+test("model configuration reads added providers and edited routes/credentials freshly", async () => {
+	let providers = [
+		{
+			id: "fixture-id",
+			name: custom.provider,
+			type: "openai-completions",
+			baseUrl: custom.baseUrl,
+			apiKey: "original-fixture-key",
+			models: [custom],
+		},
+	];
+	const configuration = new ModelConfiguration(async () => providers);
+	assert.equal((await configuration.getProvider(custom.provider)).apiKey, "original-fixture-key");
+	assert.equal((await configuration.resolveModel(custom)).baseUrl, custom.baseUrl);
+	const edited = { ...custom, baseUrl: "https://edited-route.invalid/v1", headers: { "x-billing-route": "edited" } };
+	providers = [{ ...providers[0], apiKey: "edited-fixture-key", models: [edited] }];
+	assert.equal((await configuration.getProvider("fixture-id")).apiKey, "edited-fixture-key");
+	assert.deepEqual(await configuration.resolveModel(custom), { ...edited, type: undefined });
+	const added = { ...custom, provider: "newly-configured-route" };
+	providers.push({
+		id: "added-id",
+		name: added.provider,
+		type: "openai-completions",
+		baseUrl: added.baseUrl,
+		apiKey: "added-fixture-key",
+		models: [added],
+	});
+	assert.equal((await configuration.getProvider(added.provider)).apiKey, "added-fixture-key");
+	assert.equal((await configuration.resolveModel(added)).provider, added.provider);
 });
 
 test("model equality includes the billing provider and tolerates empty selections", () => {
@@ -167,7 +223,7 @@ test("custom streaming normalizes legacy prompt/tools and retains route, overrid
 				assert.equal(typeof init?.body, "string");
 				const body = JSON.parse(String(init?.body));
 				assert.equal(body.model, custom.id);
-			assert.ok(body.messages.some((message) => message.content === "Keep this prompt"));
+				assert.ok(body.messages.some((message) => message.content === "Keep this prompt"));
 				assert.equal(body.tools[0].function.name, "navigate");
 				assert.deepEqual(body.tools[0].function.parameters.properties.target, { type: "string" });
 				return completionsResponse();

@@ -148,10 +148,42 @@ export function getModel(provider: string, id: string): Model | undefined {
 	return modelRegistry.getModel(provider, id);
 }
 
+export interface CustomModelProvider {
+	id: string;
+	name: string;
+	type: string;
+	baseUrl: string;
+	apiKey?: string;
+	models?: readonly Model[];
+}
+
+export class ModelConfiguration {
+	constructor(private readonly readProviders: () => Promise<readonly CustomModelProvider[]>) {}
+
+	async getProviders(): Promise<readonly CustomModelProvider[]> {
+		return (await this.readProviders()).filter(
+			(provider) => !isRemovedProvider(provider.id) && !isRemovedProvider(provider.name),
+		);
+	}
+
+	async getProvider(id: string): Promise<CustomModelProvider | undefined> {
+		return (await this.getProviders()).find((provider) => provider.id === id || provider.name === id);
+	}
+
+	async resolveModel(saved: unknown): Promise<Model | undefined> {
+		const providers = await this.getProviders();
+		return rehydrateModel(
+			saved,
+			providers.flatMap((provider) => provider.models ?? []),
+			providers,
+		);
+	}
+}
+
 export function rehydrateModel(
 	saved: unknown,
 	customModels: readonly Model[] = [],
-	configuredCustomProviders: readonly string[] = [],
+	configuredCustomProviders: readonly CustomModelProvider[] = [],
 ): Model | undefined {
 	if (
 		!saved ||
@@ -168,9 +200,25 @@ export function rehydrateModel(
 	if (builtin) return builtin;
 	if (modelRegistry.getProvider(saved.provider)) return undefined;
 	const custom = customModels.find((model) => model.provider === saved.provider && model.id === saved.id);
-	if (custom && customApis.has(custom.api)) return isRecord(saved) ? (savedCustomModel(saved) ?? custom) : custom;
-	if (!configuredCustomProviders.includes(saved.provider) || !isRecord(saved)) return undefined;
-	return savedCustomModel(saved);
+	if (custom && customApis.has(custom.api)) return savedCustomModel({ ...custom });
+	const configured = configuredCustomProviders.find(
+		(provider) => provider.id === saved.provider || provider.name === saved.provider,
+	);
+	if (
+		!configured ||
+		isRemovedProvider(configured.id) ||
+		isRemovedProvider(configured.name) ||
+		!["ollama", "llama.cpp", "vllm", "lmstudio"].includes(configured.type) ||
+		!isRecord(saved)
+	)
+		return undefined;
+	return savedCustomModel({
+		...saved,
+		api: "openai-completions",
+		baseUrl: `${configured.baseUrl.replace(/\/+$/, "")}/v1`,
+		headers: undefined,
+		compat: undefined,
+	});
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -220,6 +268,13 @@ function savedCustomModel(saved: Record<string, unknown>): Model | undefined {
 			if (typeof value !== "string") return undefined;
 			headers[name] = value;
 		}
+	}
+	try {
+		const url = new URL(saved.baseUrl);
+		if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return undefined;
+		new Headers(headers);
+	} catch {
+		return undefined;
 	}
 	return {
 		...saved,
