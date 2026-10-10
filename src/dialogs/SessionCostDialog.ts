@@ -1,12 +1,12 @@
 import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
 import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import { icon } from "@mariozechner/mini-lit/dist/icons.js";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { Chart, type ChartConfiguration, registerables } from "chart.js";
 import type { PropertyValues } from "lit";
 import { html } from "lit";
 import { DollarSign } from "lucide";
+import type { AgentMessage } from "../pi/agent.js";
+import type { AssistantMessage } from "../pi/models.js";
 
 // Register Chart.js components
 Chart.register(...registerables);

@@ -2,9 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Migrated the agent runtime and model/auth registry to `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` 1.1.0, retaining the existing UI and stored data formats.
+
 ### Removed
 
 - Removed the marketing site, site-specific development and deployment tooling, and website-backed extension update links.
+- Removed Gemini CLI subscription login and the Gemini CLI/Antigravity provider routes. Existing stored credentials are preserved; users with a saved model from a removed provider must select another model.
 
 ## [1.0.0] - 2026-03-15
 

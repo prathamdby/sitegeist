@@ -1,5 +1,5 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { Message } from "@mariozechner/pi-ai";
+import type { AgentMessage } from "../pi/agent.js";
+import type { Message } from "../pi/models.js";
 import type { NavigationMessage } from "./NavigationMessage.js";
 
 // Helper: Check if a message has toolCall blocks
@@ -75,7 +75,7 @@ function reorderMessages(messages: Message[]): Message[] {
 // Custom message transformer for browser extension
 // Handles navigation messages and app-specific message types
 export async function browserMessageTransformer(messages: AgentMessage[]): Promise<Message[]> {
-	const transformed = [];
+	const transformed: Message[] = [];
 
 	for (const m of messages) {
 		// Filter out UI-only messages
@@ -84,12 +84,19 @@ export async function browserMessageTransformer(messages: AgentMessage[]): Promi
 		}
 
 		// Filter non-LLM messages
-		if (m.role !== "user" && m.role !== "assistant" && m.role !== "toolResult" && m.role !== "navigation") {
+		if (
+			m.role !== "system" &&
+			m.role !== "user" &&
+			m.role !== "user-with-attachments" &&
+			m.role !== "assistant" &&
+			m.role !== "toolResult" &&
+			m.role !== "navigation"
+		) {
 			continue;
 		}
 
 		if (m.role === "navigation") {
-			const nav = m as NavigationMessage;
+			const nav: NavigationMessage = m;
 			const tabInfo = nav.tabId !== undefined ? ` (tab id: ${nav.tabId})` : "";
 
 			// Use cached skills output (formatted at message creation time)
@@ -110,12 +117,23 @@ ${skillsInfo}
 - DO NOT STOP - This is informational only. CONTINUE IMMEDIATELY with the next step of your multi-step workflow. This message does NOT mean you should wait for user input.
 - DO NOT REPEAT THIS MESSAGE BACK TO THE USER!
 </instructions>`,
-			} as Message);
-		} else if (m.role === "user") {
-			const { attachments, ...rest } = m as any;
-			transformed.push(rest as Message);
+				timestamp: Date.now(),
+			});
+		} else if (m.role === "user-with-attachments") {
+			const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : [...m.content];
+			for (const attachment of m.attachments ?? []) {
+				if (attachment.type === "image") {
+					content.push({ type: "image", data: attachment.content, mimeType: attachment.mimeType });
+				} else if (attachment.extractedText) {
+					content.push({
+						type: "text",
+						text: `\n\n[Document: ${attachment.fileName}]\n${attachment.extractedText}`,
+					});
+				}
+			}
+			transformed.push({ role: "user", content, timestamp: m.timestamp });
 		} else {
-			transformed.push(m as Message);
+			transformed.push(m);
 		}
 	}
 

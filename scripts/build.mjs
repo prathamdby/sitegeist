@@ -45,6 +45,8 @@ const buildOptions = {
 	inject: [join(packageRoot, "scripts/process-shim.js")],
 	// Force all mini-lit and lit imports to resolve to sitegeist's node_modules
 	alias: {
+		"@mariozechner/pi-ai": join(packageRoot, "src/pi/models.ts"),
+		"@mariozechner/pi-agent-core": join(packageRoot, "src/pi/agent.ts"),
 		process: join(packageRoot, "scripts/process-shim.js"),
 		"@mariozechner/mini-lit": join(packageRoot, "node_modules/@mariozechner/mini-lit"),
 		lit: join(packageRoot, "node_modules/lit"),

@@ -8,7 +8,6 @@
 
 import { loginAnthropic, refreshAnthropic } from "./anthropic.js";
 import { loginGitHubCopilot, refreshGitHubCopilot } from "./github-copilot.js";
-import { loginGeminiCli, refreshGeminiCli } from "./google-gemini-cli.js";
 import { loginOpenAICodex, refreshOpenAICodex } from "./openai-codex.js";
 import {
 	isOAuthCredentials,
@@ -19,13 +18,12 @@ import {
 
 export { type OAuthCredentials, isOAuthCredentials, parseOAuthCredentials, serializeOAuthCredentials };
 
-export type OAuthProviderId = "anthropic" | "openai-codex" | "github-copilot" | "google-gemini-cli";
+export type OAuthProviderId = "anthropic" | "openai-codex" | "github-copilot";
 
 const OAUTH_PROVIDERS: Record<OAuthProviderId, { name: string }> = {
 	anthropic: { name: "Anthropic (Claude Pro/Max)" },
 	"openai-codex": { name: "ChatGPT Plus/Pro" },
 	"github-copilot": { name: "GitHub Copilot" },
-	"google-gemini-cli": { name: "Google Gemini" },
 };
 
 /**
@@ -64,8 +62,6 @@ export async function oauthLogin(
 			return loginOpenAICodex();
 		case "github-copilot":
 			return loginGitHubCopilot(onDeviceCode || (() => {}));
-		case "google-gemini-cli":
-			return loginGeminiCli();
 		default:
 			throw new Error(`Unknown OAuth provider: ${provider}`);
 	}
@@ -83,10 +79,8 @@ export async function oauthRefresh(credentials: OAuthCredentials, _proxyUrl?: st
 			return refreshOpenAICodex(credentials);
 		case "github-copilot":
 			return refreshGitHubCopilot(credentials);
-		case "google-gemini-cli":
-			return refreshGeminiCli(credentials);
 		default:
-			throw new Error(`Unknown OAuth provider: ${credentials.providerId}`);
+			throw new Error(`Unsupported OAuth provider: ${credentials.providerId}`);
 	}
 }
 
@@ -107,6 +101,9 @@ export async function resolveApiKey(
 	}
 
 	let credentials = parseOAuthCredentials(storedValue);
+	if (!isOAuthProvider(credentials.providerId)) {
+		throw new Error(`Unsupported OAuth provider: ${credentials.providerId}`);
+	}
 
 	// Refresh if expired (or within 60s of expiry)
 	if (Date.now() >= credentials.expires - 60_000) {
@@ -117,11 +114,6 @@ export async function resolveApiKey(
 			console.error(`Failed to refresh OAuth token for ${provider}:`, error);
 			throw new Error(`OAuth token expired and refresh failed for ${provider}`);
 		}
-	}
-
-	// Gemini CLI expects the API key as JSON with token and projectId
-	if (credentials.providerId === "google-gemini-cli") {
-		return JSON.stringify({ token: credentials.access, projectId: credentials.projectId });
 	}
 
 	return credentials.access;

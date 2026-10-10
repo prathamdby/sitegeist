@@ -1,5 +1,4 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
-import { getProviders } from "@mariozechner/pi-ai";
 import { getAppStorage, SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { Toast } from "../components/Toast.js";
@@ -11,14 +10,14 @@ import {
 	parseOAuthCredentials,
 	serializeOAuthCredentials,
 } from "../oauth/index.js";
+import { getProviders } from "../pi/models.js";
 
-const OAUTH_PROVIDERS: OAuthProviderId[] = ["anthropic", "openai-codex", "github-copilot", "google-gemini-cli"];
+const OAUTH_PROVIDERS: OAuthProviderId[] = ["anthropic", "openai-codex", "github-copilot"];
 
 const PROVIDER_KEY_MAP: Record<OAuthProviderId, string> = {
 	anthropic: "anthropic",
 	"openai-codex": "openai-codex",
 	"github-copilot": "github-copilot",
-	"google-gemini-cli": "google-gemini-cli",
 };
 
 // Providers to hide from the API key list (OAuth-only or irrelevant for browser use)

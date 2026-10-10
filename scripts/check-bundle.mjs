@@ -1,0 +1,34 @@
+import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
+
+const root = fileURLToPath(new URL("../", import.meta.url));
+const result = await build({
+	absWorkingDir: root,
+	entryPoints: ["src/sidepanel.ts", "src/debug.ts", "src/background.ts"],
+	bundle: true,
+	platform: "browser",
+	format: "esm",
+	target: "chrome120",
+	outdir: "bundle-probe",
+	write: false,
+	metafile: true,
+	define: { "process.env.NODE_ENV": '"production"', "process.env.TARGET_BROWSER": '"chrome"', global: "globalThis" },
+	inject: [`${root}scripts/process-shim.js`],
+	alias: {
+		process: `${root}scripts/process-shim.js`,
+		"@mariozechner/pi-ai": `${root}src/pi/models.ts`,
+		"@mariozechner/pi-agent-core": `${root}src/pi/agent.ts`,
+		"@mariozechner/mini-lit": `${root}node_modules/@mariozechner/mini-lit`,
+		lit: `${root}node_modules/lit`,
+	},
+});
+
+const inputs = Object.keys(result.metafile.inputs);
+const legacy = inputs.filter((path) =>
+	/(?:node_modules\/@mariozechner\/pi-(?:ai|agent-core)\/|pi-mono\/packages\/(?:ai|agent)\/)/.test(path),
+);
+assert.deepEqual(legacy, [], "Legacy SDK implementations must not enter the browser bundle");
+assert.ok(inputs.some((path) => path.includes("@earendil-works/pi-agent-core/dist/agent.js")));
+assert.ok(inputs.some((path) => path.includes("@earendil-works/pi-ai/dist/models.js")));
+console.log(`Browser bundle verified: ${inputs.length} inputs, zero legacy SDK implementations.`);

@@ -5,6 +5,10 @@
 		"lib": ["ES2022", "DOM", "DOM.Iterable"],
 		"module": "ESNext",
 		"moduleResolution": "Bundler",
+		"paths": {
+			"@mariozechner/pi-ai": ["./src/pi/models.ts"],
+			"@mariozechner/pi-agent-core": ["./src/pi/agent.ts"]
+		},
 		"target": "ES2022",
 		"types": ["chrome"],
 		"strict": true,

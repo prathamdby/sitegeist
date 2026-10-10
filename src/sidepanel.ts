@@ -3,17 +3,8 @@ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
 import {
-	Agent,
-	type AgentEvent,
-	type AgentMessage,
-	type AgentState,
-	type AgentTool,
-} from "@mariozechner/pi-agent-core";
-import { getModel, getModels, type Model } from "@mariozechner/pi-ai";
-import {
 	ChatPanel,
 	createExtractDocumentTool,
-	createStreamFn,
 	ModelSelector,
 	ProxyTab,
 	SettingsDialog,
@@ -23,6 +14,7 @@ import {
 } from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
 import { History, Plus, Settings } from "lucide";
+import { Toast } from "./components/Toast.js";
 import { AboutTab } from "./dialogs/AboutTab.js";
 import { ApiKeyOrOAuthDialog } from "./dialogs/ApiKeyOrOAuthDialog.js";
 import { ApiKeysOAuthTab } from "./dialogs/ApiKeysOAuthTab.js";
@@ -41,6 +33,18 @@ import {
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
 import { isOAuthCredentials, resolveApiKey } from "./oauth/index.js";
+import {
+	Agent,
+	type AgentEvent,
+	type AgentMessage,
+	type AgentState,
+	type AgentTool,
+	executableTool,
+} from "./pi/agent.js";
+import { CostRecorder } from "./pi/costs.js";
+import { getModel, getModels, getProviders, ModelConfiguration } from "./pi/models.js";
+import { selectionRequiredModel } from "./pi/selection.js";
+import { createStreamFn } from "./pi/stream.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
 import { SitegeistAppStorage } from "./storage/app-storage.js";
 import { DebuggerTool } from "./tools/debugger.js";
@@ -81,6 +85,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ============================================================================
 const storage = new SitegeistAppStorage();
 setAppStorage(storage);
+const modelConfiguration = new ModelConfiguration(() => storage.customProviders.getAll());
 
 // ============================================================================
 // APP STATE
@@ -98,8 +103,7 @@ let currentWindowId: number;
 const shownSkills = new Map<string, string>();
 
 // Track which messages we've already recorded costs for (avoid duplicates)
-// Use Set with message object identity (not cleared on session switch - persists in memory)
-const recordedCostMessages = new Set<AgentMessage>();
+const costRecorder = new CostRecorder();
 
 // Cached auth type label for the current provider
 let authLabel = "";
@@ -111,8 +115,6 @@ const DEFAULT_MODELS: Record<string, string> = {
 	cerebras: "zai-glm-4.6",
 	"github-copilot": "gpt-4o",
 	google: "gemini-2.5-flash",
-	"google-antigravity": "gemini-3.1-pro-high",
-	"google-gemini-cli": "gemini-2.5-pro",
 	"google-vertex": "gemini-3-pro-preview",
 	groq: "openai/gpt-oss-20b",
 	huggingface: "moonshotai/Kimi-K2.5",
@@ -138,7 +140,7 @@ async function selectDefaultModelForAvailableProvider() {
 	for (const provider of providers) {
 		const modelId = DEFAULT_MODELS[provider];
 		if (modelId) {
-			const model = getModel(provider as any, modelId);
+			const model = getModel(provider, modelId);
 			if (model) {
 				agent.setModel(model);
 				await storage.settings.set("lastUsedModel", model);
@@ -151,7 +153,7 @@ async function selectDefaultModelForAvailableProvider() {
 
 	// If no default found, try the first model for the first provider with a key
 	for (const provider of providers) {
-		const models = getModels(provider as any);
+		const models = getModels(provider);
 		if (models.length > 0) {
 			agent.setModel(models[0]);
 			await storage.settings.set("lastUsedModel", models[0]);
@@ -167,7 +169,12 @@ async function getProvidersWithKeys(): Promise<string[]> {
 	const result: string[] = [];
 	for (const provider of providers) {
 		const key = await storage.providerKeys.get(provider);
-		if (key) result.push(provider);
+		if (key && getProviders().includes(provider)) result.push(provider);
+	}
+	for (const provider of await modelConfiguration.getProviders()) {
+		for (const id of [provider.id, provider.name]) {
+			if (!getProviders().includes(id) && !result.includes(id)) result.push(id);
+		}
 	}
 	return result;
 }
@@ -211,8 +218,8 @@ export function getShownSkills(): Map<string, string> {
 // HELPERS
 // ============================================================================
 const generateTitle = (messages: AgentMessage[]): string => {
-	const firstUserMsg = messages.find((m) => m.role === "user");
-	if (!firstUserMsg || firstUserMsg.role !== "user") return "";
+	const firstUserMsg = messages.find((m) => m.role === "user" || m.role === "user-with-attachments");
+	if (!firstUserMsg || (firstUserMsg.role !== "user" && firstUserMsg.role !== "user-with-attachments")) return "";
 
 	let text = "";
 	const content = firstUserMsg.content;
@@ -235,7 +242,7 @@ const generateTitle = (messages: AgentMessage[]): string => {
 };
 
 const shouldSaveSession = (messages: AgentMessage[]): boolean => {
-	const hasUserMsg = messages.some((m: AgentMessage) => m.role === "user");
+	const hasUserMsg = messages.some((m: AgentMessage) => m.role === "user" || m.role === "user-with-attachments");
 	const hasAssistantMsg = messages.some((m: AgentMessage) => m.role === "assistant");
 	return hasUserMsg && hasAssistantMsg;
 };
@@ -278,7 +285,7 @@ const saveSession = async () => {
 		let preview = "";
 		for (const msg of state.messages) {
 			if (preview.length >= 2048) break;
-			if (msg.role === "user") {
+			if (msg.role === "user" || msg.role === "user-with-attachments") {
 				const text =
 					typeof msg.content === "string"
 						? msg.content
@@ -306,7 +313,7 @@ const saveSession = async () => {
 			title: currentTitle,
 			createdAt,
 			lastModified: new Date().toISOString(),
-			messageCount: state.messages.length,
+			messageCount: state.messages.filter((message) => message.role !== "system").length,
 			usage,
 			modelId: state.model.id,
 			thinkingLevel: state.thinkingLevel,
@@ -331,11 +338,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 	}
 
 	// Mark all loaded messages as already recorded (by object identity)
-	for (const msg of initialState?.messages || []) {
-		if (msg.role === "assistant" && msg.usage?.cost?.total > 0) {
-			recordedCostMessages.add(msg);
-		}
-	}
+	costRecorder.seed(initialState?.messages ?? []);
 
 	// Reset skill tracking for new session
 	// When loading an old session, we intentionally don't reconstruct shownSkills
@@ -351,49 +354,41 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 	const corsProxyEnabled = await storage.settings.get<boolean>("proxy.enabled");
 	const corsProxyUrl = await storage.settings.get<string>("proxy.url");
 
-	// Determine default model: saved > default for a provider with key > gemini flash fallback
-	let defaultModel: Model<any> | undefined;
-	if (!initialState?.model) {
-		const savedModel = await storage.settings.get<Model<any>>("lastUsedModel");
-		if (savedModel) {
-			defaultModel = savedModel;
-		} else {
-			// Try to find a default model for a provider the user already has a key for
-			const providersWithKeys = await getProvidersWithKeys();
-			for (const provider of providersWithKeys) {
-				const modelId = DEFAULT_MODELS[provider];
-				if (modelId) {
-					const model = getModel(provider as any, modelId);
-					if (model) {
-						defaultModel = model;
-						break;
-					}
-				}
-			}
+	const savedModel = initialState ? initialState.model : await storage.settings.get<unknown>("lastUsedModel");
+	const hasSavedSelection = initialState !== undefined || (savedModel !== undefined && savedModel !== null);
+	let defaultModel = await modelConfiguration.resolveModel(savedModel);
+	if (!hasSavedSelection) {
+		for (const provider of await getProvidersWithKeys()) {
+			const modelId = DEFAULT_MODELS[provider];
+			if (modelId) defaultModel = getModel(provider, modelId);
+			if (defaultModel) break;
 		}
-	}
-	// Final fallback
-	if (!defaultModel && !initialState?.model) {
-		defaultModel = getModel("anthropic", "claude-sonnet-4-6");
 	}
 
 	agent = new Agent({
-		initialState: initialState || {
+		initialState: {
 			systemPrompt: SYSTEM_PROMPT,
-			model: defaultModel,
 			thinkingLevel: "medium",
 			messages: [],
 			tools: [],
+			...initialState,
+			model: defaultModel ?? selectionRequiredModel,
 		},
 		convertToLlm: browserMessageTransformer,
 		toolExecution: "sequential",
+		prepareRequest: async ({ model }) => {
+			const resolved = await modelConfiguration.resolveModel(model);
+			if (!resolved) throw new Error("The selected model is no longer configured. Select a model again.");
+			return { model: resolved };
+		},
 		streamFn: createStreamFn(async () => {
 			const enabled = await storage.settings.get<boolean>("proxy.enabled");
 			if (!enabled) return undefined;
 			return (await storage.settings.get<string>("proxy.url")) || undefined;
 		}),
 		getApiKey: async (provider: string) => {
-			const stored = await storage.providerKeys.get(provider);
+			const customProvider = await modelConfiguration.getProvider(provider);
+			const stored = (await storage.providerKeys.get(provider)) ?? customProvider?.apiKey;
 			if (!stored) return undefined;
 			const proxyEnabled = await storage.settings.get<boolean>("proxy.enabled");
 			const proxyUrl = proxyEnabled ? (await storage.settings.get<string>("proxy.url")) || undefined : undefined;
@@ -407,22 +402,20 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		agentUnsubscribe = agent.subscribe((event: AgentEvent) => {
 			const messages = agent.state.messages;
 
-			storage.settings
-				.set("lastUsedModel", agent.state.model)
-				.catch((err) => console.error("Failed to save lastUsedModel:", err));
+			if (agent.state.model.provider) {
+				storage.settings
+					.set("lastUsedModel", agent.state.model)
+					.catch((err) => console.error("Failed to save lastUsedModel:", err));
+			}
 
 			// Update auth label when model changes
 			updateAuthLabel().catch(() => {});
 
-			if (
-				event.type === "message_end" &&
-				event.message.role === "assistant" &&
-				event.message.usage?.cost?.total > 0
-			) {
-				if (!recordedCostMessages.has(event.message)) {
-					recordedCostMessages.add(event.message);
+			if (event.type === "message_end") {
+				const cost = costRecorder.take(event.message);
+				if (cost) {
 					storage.costs
-						.recordCost(agent.state.model.provider, agent.state.model.id, event.message.usage.cost.total)
+						.recordCost(cost.provider, cost.model, cost.cost)
 						.catch((err) => console.error("Failed to record cost:", err));
 				}
 			}
@@ -461,6 +454,11 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			return chrome.runtime.getURL("sandbox.html");
 		},
 		onApiKeyRequired: async (provider: string) => {
+			if (!provider) {
+				chatPanel.agentInterface?.onModelSelect?.();
+				return false;
+			}
+			if (await modelConfiguration.getProvider(provider)) return true;
 			return await ApiKeyOrOAuthDialog.prompt(provider);
 		},
 		onModelSelect: async () => {
@@ -471,8 +469,14 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			}
 			ModelSelector.open(
 				agent.state.model,
-				(model) => {
-					agent.setModel(model);
+				async (model) => {
+					const resolved = await modelConfiguration.resolveModel(model);
+					if (!resolved) {
+						Toast.error("That model is no longer configured. Select another model.");
+						return;
+					}
+					agent.setModel(resolved);
+					storage.settings.set("lastUsedModel", resolved).catch(() => {});
 					chatPanel.agentInterface?.requestUpdate();
 					updateAuthLabel().catch(() => {});
 					renderApp();
@@ -545,24 +549,26 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			const extractImageTool = new ExtractImageTool();
 			extractImageTool.windowId = currentWindowId;
 
-			const tools: AgentTool<any, any>[] = [
-				navigateTool,
-				selectElementTool,
-				replTool,
-				skillTool,
-				extractDocumentTool,
-				extractImageTool,
+			const tools: AgentTool[] = [
+				executableTool(navigateTool),
+				executableTool(selectElementTool),
+				executableTool(replTool),
+				executableTool(skillTool),
+				executableTool(extractDocumentTool),
+				executableTool(extractImageTool),
 			];
 
 			// Conditionally add debugger tool if enabled
 			if (debuggerModeEnabled) {
 				const debuggerTool = new DebuggerTool();
-				tools.push(debuggerTool);
+				tools.push(executableTool(debuggerTool));
 			}
 
 			return tools;
 		},
 	});
+	agent.onModelRequired = () => chatPanel.agentInterface?.onModelSelect?.();
+	if (hasSavedSelection && !defaultModel) chatPanel.agentInterface?.onModelSelect?.();
 
 	// Register custom message renderers after agentInterface is available
 	if (chatPanel.agentInterface) {
@@ -570,14 +576,16 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 		// Only disable auto-scroll for new sessions with welcome message
 		// Check if this is a fresh session (only has welcome message, no user messages)
-		const hasUserMessage = agent.state.messages.some((m) => m.role === "user");
+		const hasUserMessage = agent.state.messages.some((m) => m.role === "user" || m.role === "user-with-attachments");
 		if (!hasUserMessage) {
 			chatPanel.agentInterface.setAutoScroll(false);
 
 			// Re-enable auto-scroll on first user message
 			let unsubscribe: (() => void) | undefined;
 			unsubscribe = agent.subscribe(() => {
-				const hasUserMsg = agent.state.messages.some((m) => m.role === "user");
+				const hasUserMsg = agent.state.messages.some(
+					(m) => m.role === "user" || m.role === "user-with-attachments",
+				);
 				if (hasUserMsg && unsubscribe) {
 					chatPanel.agentInterface?.setAutoScroll(true);
 					unsubscribe();
