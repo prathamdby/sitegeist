@@ -10,7 +10,7 @@ Bring your own API key or log in with an existing subscription (Anthropic Claude
 
 ## Download & Install
 
-Visit [sitegeist.ai](https://sitegeist.ai) for download links and step-by-step installation instructions.
+Download packaged releases from [GitHub Releases](https://github.com/badlogic/sitegeist/releases). To install a release, unzip it, open `chrome://extensions/` or `edge://extensions/`, enable Developer mode, and load the extracted folder.
 
 Requires Chrome 141+ or Edge equivalent.
 
@@ -35,7 +35,7 @@ npm install
 
 `npm install` sets up the Husky pre-commit hook automatically.
 
-Start all dev watchers (mini-lit, pi-mono, sitegeist extension, marketing site):
+Start all dev watchers (mini-lit, pi-mono, and the extension):
 
 ```bash
 ./dev.sh
@@ -43,7 +43,7 @@ Start all dev watchers (mini-lit, pi-mono, sitegeist extension, marketing site):
 
 Changes in `../mini-lit` or `../pi-mono` are rebuilt automatically and picked up by the sitegeist watcher.
 
-To run only the extension watcher without dependencies or the marketing site:
+To run only the extension watcher after building its sibling dependencies:
 
 ```bash
 npm run dev
@@ -73,7 +73,7 @@ Some subscription logins require the CORS proxy (configurable in Settings > Prox
 ./check.sh
 ```
 
-Runs formatting, linting, and type checking for the extension and the `site/` subproject.
+Runs formatting, linting, and type checking for the extension.
 
 The Husky pre-commit hook runs the same checks before each commit.
 
@@ -84,14 +84,6 @@ npm run build
 ```
 
 The unpacked extension is written to `dist-chrome/`.
-
-## Updating the website
-
-```bash
-cd site && ./run.sh deploy
-```
-
-Builds the static site and uploads it to `sitegeist.ai`. Requires SSH access to `slayer.marioslab.io`.
 
 ## Releasing
 

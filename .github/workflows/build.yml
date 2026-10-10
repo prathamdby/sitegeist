@@ -55,7 +55,7 @@ jobs:
             const re = new RegExp('## \\\\[' + version.replace(/\\./g, '\\\\.') + '\\\\][^\\\\n]*\\n(.*?)(?=\\n## \\\\[|$)', 's');
             const match = changelog.match(re);
             let notes = match ? match[1].trim() : '';
-            notes += '\n\n---\n\nDownload \`sitegeist.zip\`, unzip, and load as unpacked extension in Chrome/Edge.\n\nSee [installation instructions](https://sitegeist.ai/install.html) for details.';
+            notes += '\n\n---\n\nDownload \`sitegeist.zip\`, unzip, and load as an unpacked extension in Chrome/Edge. See the [repository README](https://github.com/badlogic/sitegeist#loading-the-extension) for setup details.';
             fs.writeFileSync('/tmp/release-notes.md', notes);
           "
         env:

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Start all development servers for sitegeist and its dependencies
+# Start development watchers for the extension and its dependencies
 # Usage: ./dev.sh
 
 set -e
@@ -38,17 +38,11 @@ echo "Starting sitegeist dev server..."
 npm run dev &
 SITEGEIST_PID=$!
 
-echo "Starting sitegeist site dev server..."
-(cd site && ./run.sh dev) &
-SITE_PID=$!
-
 echo ""
 echo "All dev services started"
 echo "  mini-lit: watching"
 echo "  pi-mono: watching"
 echo "  sitegeist: watching"
-echo "  site backend: http://localhost:3000"
-echo "  site frontend: http://localhost:8080"
 echo ""
 echo "Press Ctrl+C to stop all services"
 echo ""
