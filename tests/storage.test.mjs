@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -185,6 +185,7 @@ test("version-3 fixtures retain schema, unknown records, search, rename, export/
 	}
 	db.close();
 	const restored = await storage.sessions.loadSession("older");
+	assert.deepEqual(await storage.sessions.get("older"), restored);
 	assert.deepEqual(restored.model, model);
 	assert.equal(restored.extra, "preserved");
 	assert.deepEqual(restored.messages[3].content, [{ type: "text", text: "legacy output" }]);
@@ -213,8 +214,15 @@ test("version-3 fixtures retain schema, unknown records, search, rename, export/
 	});
 	assert.equal(search.search("Needle").length, 2);
 	await storage.sessions.updateTitle("older", "Renamed");
-	assert.equal((await storage.sessions.getMetadata("older")).title, "Renamed");
+	assert.deepEqual(await storage.sessions.getMetadata("older"), { ...metadata, title: "Renamed" });
 	assert.deepEqual(await storage.backend.get("sessions", "older"), { ...data, title: "Renamed" });
+	assert.deepEqual(
+		(await storage.sessions.getAllMetadata()).map((s) => s.id),
+		["newer", "older"],
+	);
+	await storage.sessions.updateTitle("missing", "No new records");
+	assert.equal(await storage.sessions.get("missing"), null);
+	assert.equal(await storage.sessions.getMetadata("missing"), null);
 	const exported = JSON.parse(JSON.stringify({ session: restored, metadata }));
 	await storage.sessions.save({ ...exported.session, id: "imported" }, { ...exported.metadata, id: "imported" });
 	assert.deepEqual((await storage.sessions.loadSession("imported")).messages, restored.messages);
@@ -349,13 +357,42 @@ test("writes, renames and deletes abort together and resolve only after transact
 
 test("Wave 1 readers can reopen every new record without a schema upgrade", async () => {
 	const storage = await fixture();
+	const passedMetadata = {
+		...metadata,
+		id: "saved",
+		messageCount: 1,
+		preview: "Caller preview",
+		lastModified: data.createdAt,
+	};
 	await storage.sessions.saveSession(
 		"saved",
 		{ model, messages, thinkingLevel: "high" },
-		{ ...metadata, id: "saved" },
+		passedMetadata,
 		"Saved title",
 	);
 	await storage.sessions.saveSession("no-metadata", { model, messages, thinkingLevel: "off" }, undefined);
+	const stub = await storage.sessions.getMetadata("no-metadata");
+	assert.deepEqual(stub, {
+		id: "no-metadata",
+		title: "",
+		createdAt: stub.createdAt,
+		lastModified: stub.createdAt,
+		messageCount: messages.length,
+		thinkingLevel: "off",
+		preview: "",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+	});
+	assert.equal(new Date(stub.createdAt).toISOString(), stub.createdAt);
+	assert.equal((await storage.sessions.get("no-metadata")).createdAt, stub.createdAt);
+	assert.deepEqual(await storage.sessions.getMetadata("saved"), passedMetadata);
+	assert.equal((await storage.sessions.getAllMetadata()).at(-1).id, "saved");
 	await storage.settings.set("new-setting", { arbitrary: [true, 3] });
 	await storage.providerKeys.set("new-provider", oauth);
 	await storage.customProviders.set({ ...provider, id: "new-custom" });
@@ -372,9 +409,9 @@ test("Wave 1 readers can reopen every new record without a schema upgrade", asyn
 	assert.deepEqual(saved.model, model);
 	assert.deepEqual(saved.messages, messages);
 	assert.equal(saved.createdAt, data.createdAt);
-	assert.deepEqual(await oldSessions.getMetadata("saved"), { ...metadata, id: "saved" });
+	assert.deepEqual(await oldSessions.getMetadata("saved"), passedMetadata);
 	assert.equal((await oldSessions.loadSession("no-metadata")).title, "");
-	assert.equal((await oldSessions.getMetadata("no-metadata")).messageCount, messages.length);
+	assert.deepEqual(await oldSessions.getMetadata("no-metadata"), stub);
 	assert.deepEqual(await oldSettings.get("new-setting"), { arbitrary: [true, 3] });
 	assert.equal(await oldKeys.get("new-provider"), oauth);
 	assert.deepEqual(await oldProviders.get("new-custom"), { ...provider, id: "new-custom" });
@@ -387,6 +424,19 @@ test("Wave 1 readers can reopen every new record without a schema upgrade", asyn
 	);
 	const reopened = new SitegeistAppStorage();
 	assert.equal((await reopened.sessions.get("saved")).title, "Saved title");
+});
+
+test("inline keys come from the record while out-of-line keys come from the supplied key", async () => {
+	const storage = await fixture();
+	const value = { ...data, id: "keypath-id" };
+	await storage.backend.transaction(["sessions", "settings"], "readwrite", async (tx) => {
+		await tx.set("sessions", "explicit-key", value);
+		await tx.set("settings", "explicit-key", value);
+	});
+	assert.deepEqual(await storage.backend.get("sessions", "keypath-id"), value);
+	assert.equal(await storage.backend.get("sessions", "explicit-key"), null);
+	assert.deepEqual(await storage.settings.get("explicit-key"), value);
+	assert.equal(await storage.settings.get("keypath-id"), null);
 });
 
 test("unwired stores fail explicitly; quota and persistence forward browser capabilities", async () => {
@@ -413,12 +463,17 @@ test("unwired stores fail explicitly; quota and persistence forward browser capa
 test("legacy UI accessor resolves to the same application-owned singleton in the browser bundle", async () => {
 	const outdir = join(homedir(), ".capy/work/storage-tests");
 	await mkdir(outdir, { recursive: true });
+	await mkdir(join(outdir, "unrelated/storage"), { recursive: true });
+	const unrelated = join(outdir, "unrelated/storage/fixture.js");
+	await writeFile(unrelated, "export const unrelated = 'unchanged';\n");
 	const outfile = join(outdir, "bridge.mjs");
 	const result = await build({
 		stdin: {
 			contents: `import { getAppStorage as legacyGet } from '@mariozechner/pi-web-ui/dist/storage/app-storage.js';
+			import { SessionsStore as LegacySessions } from '@mariozechner/pi-web-ui/dist/storage/stores/sessions-store.js';
+			import { unrelated } from ${JSON.stringify(unrelated)};
 			import { SitegeistAppStorage, getAppStorage, setAppStorage } from './src/storage/app-storage.ts';
-			export { legacyGet, getAppStorage, setAppStorage, SitegeistAppStorage };`,
+			export { legacyGet, getAppStorage, setAppStorage, SitegeistAppStorage, LegacySessions, unrelated };`,
 			resolveDir: process.cwd(),
 		},
 		outfile,
@@ -433,6 +488,8 @@ test("legacy UI accessor resolves to the same application-owned singleton in the
 		false,
 	);
 	assert.ok((await readFile(outfile, "utf8")).includes("sitegeist-storage"));
+	assert.ok(Object.keys(result.metafile.inputs).includes("src/storage/stores/base-sessions-store.ts"));
+	assert.ok(Object.keys(result.metafile.inputs).some((path) => path.endsWith("unrelated/storage/fixture.js")));
 	await promisify(execFile)(process.execPath, [
 		"--input-type=module",
 		"-e",
@@ -443,6 +500,8 @@ test("legacy UI accessor resolves to the same application-owned singleton in the
 		globalThis.indexedDB = indexedDB;
 		globalThis.IDBKeyRange = IDBKeyRange;
 		const shared = new bundle.SitegeistAppStorage();
+		assert.ok(shared.sessions instanceof bundle.LegacySessions);
+		assert.equal(bundle.unrelated, 'unchanged');
 		bundle.setAppStorage(shared);
 		assert.equal(bundle.legacyGet(), bundle.getAppStorage());
 		assert.equal(bundle.legacyGet().backend, shared.backend);

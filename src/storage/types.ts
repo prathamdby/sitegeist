@@ -42,6 +42,7 @@ export interface IndexedDBConfig {
 
 export interface SessionMetadata {
 	id: string;
+	modelId?: string;
 	title: string;
 	createdAt: string;
 	lastModified: string;
