@@ -1,9 +1,9 @@
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import type { ImageContent, TextContent, ToolResultMessage } from "@mariozechner/pi-ai";
 import { registerToolRenderer, renderHeader, type ToolRenderer, type ToolRenderResult } from "@mariozechner/pi-web-ui";
-import { type Static, Type } from "@sinclair/typebox";
 import { html } from "lit";
 import { Image as ImageIcon } from "lucide";
+import { type Static, Type } from "typebox";
+import type { AgentTool, AgentToolResult } from "../pi/agent.js";
+import type { ImageContent, TextContent, ToolResultMessage } from "../pi/models.js";
 
 const EXTRACT_IMAGE_DESCRIPTION = `Extract images from the current page. Returns image data that you can see and analyze.
 

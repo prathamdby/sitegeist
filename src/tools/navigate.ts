@@ -1,12 +1,12 @@
 import { i18n, icon } from "@mariozechner/mini-lit";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { ToolResultMessage } from "@mariozechner/pi-ai";
 import { registerToolRenderer, type ToolRenderer, type ToolRenderResult } from "@mariozechner/pi-web-ui";
-import { type Static, Type } from "@sinclair/typebox";
 import { html } from "lit";
 import { Loader2 } from "lucide";
+import { type Static, Type } from "typebox";
 import { SkillPill } from "../components/SkillPill.js";
 import { TabPill } from "../components/TabPill.js";
+import type { AgentTool } from "../pi/agent.js";
+import type { ToolResultMessage } from "../pi/models.js";
 import { NAVIGATE_TOOL_DESCRIPTION } from "../prompts/prompts.js";
 import { getSitegeistStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";

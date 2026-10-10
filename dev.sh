@@ -1,51 +1,9 @@
 #!/bin/bash
+set -euo pipefail
 
-# Start development watchers for the extension and its dependencies
-# Usage: ./dev.sh
-
-set -e
-
-echo "Starting development servers..."
-echo ""
-
-# Check if required directories exist
-if [ ! -d "../pi-mono" ]; then
-    echo "Error: pi-mono not found at ../pi-mono"
+if [ ! -d "../pi-mono/packages/web-ui/dist" ]; then
+    echo "Error: pinned legacy pi-web-ui is not built; run the project Setup first."
     exit 1
 fi
 
-if [ ! -d "../mini-lit" ]; then
-    echo "Error: mini-lit not found at ../mini-lit"
-    exit 1
-fi
-
-# Kill all child processes on exit
-trap 'echo ""; echo "Stopping all dev servers..."; kill 0' EXIT INT TERM
-
-# Start dev servers
-echo "Starting mini-lit dev server..."
-(cd ../mini-lit && npm run dev:tsc) &
-MINI_LIT_PID=$!
-
-echo "Starting pi-mono dev server..."
-(cd ../pi-mono && npm run dev:tsc) &
-PI_MONO_PID=$!
-
-# Wait a moment for dependencies to start building
-sleep 2
-
-echo "Starting sitegeist dev server..."
-npm run dev &
-SITEGEIST_PID=$!
-
-echo ""
-echo "All dev services started"
-echo "  mini-lit: watching"
-echo "  pi-mono: watching"
-echo "  sitegeist: watching"
-echo ""
-echo "Press Ctrl+C to stop all services"
-echo ""
-
-# Wait for all background jobs
-wait
+exec npm run dev
