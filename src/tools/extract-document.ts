@@ -51,9 +51,8 @@ Structured plain text with page/sheet/slide delimiters.`,
 		parameters: extractDocumentSchema,
 		async execute(_toolCallId, params, signal) {
 			if (!params.url) throw new Error("URL is required");
-			let url: URL;
 			try {
-				url = new URL(params.url);
+				new URL(params.url);
 			} catch {
 				throw new Error(`Invalid URL: ${params.url}`);
 			}
@@ -97,7 +96,7 @@ Structured plain text with page/sheet/slide delimiters.`,
 			const bytes = await response.arrayBuffer();
 			if (signal?.aborted) throw new Error("Extract document aborted");
 			checkSize(bytes.byteLength);
-			const fileName = url.pathname.split("/").pop() || "document";
+			const fileName = params.url.split("/").pop()?.split("?")[0] || "document";
 			const attachment = await loadAttachment(bytes, fileName);
 			if (signal?.aborted) throw new Error("Extract document aborted");
 			if (!attachment.extractedText) {

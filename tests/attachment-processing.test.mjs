@@ -378,3 +378,159 @@ test("extract_document preserves header states, extracted text disclosure and er
 	}
 	await p.close();
 });
+
+test("special filenames and spreadsheet sheet names preserve raw prompt annotation markup", async () => {
+	const measured = JSON.parse(readFileSync(join(fixtures, "edge-cases.json"), "utf8"));
+	const p = await page();
+	try {
+		for (const extension of ["pdf", "docx", "pptx", "xlsx", "xls"]) {
+			const fileName = `corrupt%ZZ" <file>&.${extension}`;
+			for (const local of [false, true]) {
+				const outcome = await p.evaluate(
+					({ local, sourceName, fileName }) =>
+						window.attachmentProcessingFixture.renamedDocument(local, sourceName, fileName),
+					{ local, sourceName: `sample.${extension}`, fileName },
+				);
+				assert.deepEqual(outcome, measured.names[extension]);
+				assert.ok(outcome.extractedText.includes(`filename="${fileName}"`));
+			}
+		}
+		for (const local of [false, true]) {
+			const outcome = await p.evaluate(
+				(local) =>
+					window.attachmentProcessingFixture.renamedDocument(local, "special-names.xlsx", 'special" <file>&.xlsx'),
+				local,
+			);
+			assert.deepEqual(outcome, measured.names.specialSheet);
+			assert.ok(outcome.extractedText.includes('<sheet name="Quote" <angle>&" index="1">'));
+		}
+	} finally {
+		await p.close();
+	}
+});
+
+test("headerless documents retain URL filename rules and enforce the actual body limit after reading", async () => {
+	const measured = JSON.parse(readFileSync(join(fixtures, "edge-cases.json"), "utf8"));
+	const p = await page();
+	try {
+		for (const url of [
+			"https://example.test/download?file=sample.pdf",
+			"https://example.test/download?file=sample.pdf#document",
+		]) {
+			const baseline = await p.evaluate(
+				(url) => window.attachmentProcessingFixture.headerlessDocument(false, url),
+				url,
+			);
+			const local = await p.evaluate((url) => window.attachmentProcessingFixture.headerlessDocument(true, url), url);
+			assert.deepEqual(local, baseline);
+			assert.equal(local.error, "Unsupported file type: application/octet-stream");
+			assert.equal(local.bodyReads, 1);
+		}
+		const baseline = await p.evaluate(() =>
+			window.attachmentProcessingFixture.headerlessDocument(false, "https://example.test/sample.pdf", true),
+		);
+		const local = await p.evaluate(() =>
+			window.attachmentProcessingFixture.headerlessDocument(true, "https://example.test/sample.pdf", true),
+		);
+		assert.deepEqual(local, baseline);
+		assert.equal(local.error, measured.urls.headerlessSize.error);
+		assert.equal(local.bodyReads, 1);
+	} finally {
+		await p.close();
+	}
+});
+
+test("zero-byte documents and text mislabeled as PDF retain actual parser outcomes", async () => {
+	const measured = JSON.parse(readFileSync(join(fixtures, "edge-cases.json"), "utf8"));
+	const p = await page();
+	try {
+		for (const extension of ["pdf", "docx", "pptx", "xlsx", "xls", "txt"]) {
+			for (const local of [false, true]) {
+				const outcome = await p.evaluate(
+					({ local, name }) => window.attachmentProcessingFixture.emptyOrMislabeled(local, name),
+					{ local, name: `empty.${extension}` },
+				);
+				assert.deepEqual(outcome, measured.empty[extension], `${local ? "local" : "baseline"} ${extension}`);
+			}
+		}
+		for (const name of ["unknown", "mislabeled.txt"]) {
+			for (const local of [false, true]) {
+				const outcome = await p.evaluate(
+					({ local, name }) =>
+						window.attachmentProcessingFixture.emptyOrMislabeled(local, name, "plain text", "application/pdf"),
+					{ local, name },
+				);
+				assert.deepEqual(outcome, measured.empty[name]);
+			}
+		}
+	} finally {
+		await p.close();
+	}
+});
+
+test("existing URL scheme and private-host behavior is preserved with every fetch stubbed", async () => {
+	const p = await page();
+	try {
+		for (const url of [
+			"http://127.0.0.1:8080/sample.txt",
+			"http://localhost/sample.txt",
+			"http://10.0.0.1/sample.txt",
+			"http://192.168.1.1/sample.txt",
+			"http://169.254.169.254/sample.txt",
+			"data:text/plain,fixture.txt",
+		]) {
+			const baseline = await p.evaluate(
+				(url) => window.attachmentProcessingFixture.unrestrictedUrl(false, url),
+				url,
+			);
+			const local = await p.evaluate((url) => window.attachmentProcessingFixture.unrestrictedUrl(true, url), url);
+			assert.deepEqual(local, baseline, url);
+			assert.deepEqual(local.calls, [url]);
+			assert.deepEqual(local.result.content, [{ type: "text", text: "Fixture URL text" }]);
+		}
+	} finally {
+		await p.close();
+	}
+});
+
+test("fragment extensions and query slash ordering retain successful baseline parsing and filenames", async () => {
+	const measured = JSON.parse(readFileSync(join(fixtures, "edge-cases.json"), "utf8"));
+	const p = await page();
+	try {
+		for (const [url, fileName] of [
+			["https://example.test/download#sample.pdf", "download#sample.pdf"],
+			["https://example.test/download#sample.pdf?token=value", "download#sample.pdf"],
+			["https://example.test/download?redirect=/nested/sample.pdf", "sample.pdf"],
+			["https://example.test/download#docs/path/sample.pdf", "sample.pdf"],
+		]) {
+			const baseline = await p.evaluate(
+				(url) => window.attachmentProcessingFixture.headerlessDocument(false, url),
+				url,
+			);
+			const local = await p.evaluate((url) => window.attachmentProcessingFixture.headerlessDocument(true, url), url);
+			assert.deepEqual(local, baseline, url);
+			assert.equal(local.bodyReads, 1);
+			assert.equal(local.result.details.fileName, fileName);
+			assert.equal(local.result.details.format, "pdf");
+			assert.equal(
+				local.result.details.extractedText,
+				expected["sample.pdf"].extractedText.replace('filename="sample.pdf"', `filename="${fileName}"`),
+			);
+			if (url === "https://example.test/download#sample.pdf") {
+				assert.deepEqual(local.result, measured.urls[url]);
+			}
+		}
+		const url = "https://example.test/sample.pdf?redirect=/nested/sample.txt";
+		const baseline = await p.evaluate(
+			(url) => window.attachmentProcessingFixture.headerlessDocument(false, url),
+			url,
+		);
+		const local = await p.evaluate((url) => window.attachmentProcessingFixture.headerlessDocument(true, url), url);
+		assert.deepEqual(local, baseline);
+		assert.equal(local.result.details.fileName, "sample.txt");
+		assert.equal(local.result.details.format, "unknown");
+		assert.equal(local.result.details.extractedText, readFileSync(join(fixtures, "sample.pdf"), "utf8"));
+	} finally {
+		await p.close();
+	}
+});

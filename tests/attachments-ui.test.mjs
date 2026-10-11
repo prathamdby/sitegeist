@@ -81,7 +81,10 @@ const attachments = [
 before(async () => {
 	mkdirSync(work, { recursive: true });
 	if (renders) mkdirSync(renders, { recursive: true });
-	execFileSync(`${root}node_modules/.bin/tailwindcss`, ["-i", `${root}src/app.css`, "-o", join(work, "app.css")]);
+	execFileSync(`${root}node_modules/.bin/tailwindcss`, ["-i", `${root}src/app.css`, "-o", join(work, "app.css")], {
+		timeout: 30000,
+		stdio: "inherit",
+	});
 	const bundle = async (entry, local = false) => {
 		const result = await build({
 			entryPoints: [entry],

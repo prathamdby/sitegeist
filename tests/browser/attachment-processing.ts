@@ -154,6 +154,70 @@ const fixture = {
 	get pdfStartupResult() {
 		return pdfStartupResult;
 	},
+	async renamedDocument(local: boolean, sourceName: string, fileName: string) {
+		const bytes = await (await fetch(`/files/${sourceName}`)).arrayBuffer();
+		const attachment = await (local ? loadAttachment : baselineLoad)(bytes, fileName);
+		return { mimeType: attachment.mimeType, extractedText: attachment.extractedText };
+	},
+	async emptyOrMislabeled(local: boolean, fileName: string, text = "", mimeType?: string) {
+		try {
+			const attachment = await (local ? loadAttachment : baselineLoad)(
+				mimeType === undefined ? new TextEncoder().encode(text).buffer : new Blob([text], { type: mimeType }),
+				fileName,
+			);
+			return {
+				mimeType: attachment.mimeType,
+				type: attachment.type,
+				size: attachment.size,
+				content: attachment.content,
+				extractedText: attachment.extractedText,
+			};
+		} catch (error) {
+			return { error: error instanceof Error ? error.message : String(error) };
+		}
+	},
+	async headerlessDocument(local: boolean, url: string, oversized = false) {
+		const bytes = oversized ? undefined : await (await fetch("/files/sample.pdf")).arrayBuffer();
+		const originalFetch = window.fetch;
+		let bodyReads = 0;
+		window.fetch = async () =>
+			({
+				ok: true,
+				headers: new Headers({ "Content-Type": "application/pdf" }),
+				async arrayBuffer() {
+					bodyReads++;
+					return oversized ? new ArrayBuffer(50 * 1024 * 1024 + 1) : bytes!;
+				},
+			}) as Response;
+		try {
+			return {
+				result: await (local ? createExtractDocumentTool : baselineTool)().execute("fixture", { url }),
+				bodyReads,
+			};
+		} catch (error) {
+			return { error: error instanceof Error ? error.message : String(error), bodyReads };
+		} finally {
+			window.fetch = originalFetch;
+		}
+	},
+	async unrestrictedUrl(local: boolean, url: string) {
+		const originalFetch = window.fetch;
+		const calls: string[] = [];
+		window.fetch = async (input) => {
+			calls.push(String(input));
+			return new Response("Fixture URL text", { headers: { "Content-Type": "text/plain" } });
+		};
+		try {
+			return {
+				result: await (local ? createExtractDocumentTool : baselineTool)().execute("fixture", { url }),
+				calls,
+			};
+		} catch (error) {
+			return { error: error instanceof Error ? error.message : String(error), calls };
+		} finally {
+			window.fetch = originalFetch;
+		}
+	},
 	pdfWorkerCounts,
 	trackPdfWorkers() {
 		const NativeWorker = window.Worker;

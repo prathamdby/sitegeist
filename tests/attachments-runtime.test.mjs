@@ -3,6 +3,7 @@ import test from "node:test";
 import vm from "node:vm";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
+import { AttachmentsRuntimeProvider as BaselineAttachmentsRuntimeProvider } from "../node_modules/@mariozechner/pi-web-ui/dist/components/sandbox/AttachmentsRuntimeProvider.js";
 import { AttachmentsRuntimeProvider } from "../src/attachments/AttachmentsRuntimeProvider.ts";
 import { browserMessageTransformer } from "../src/messages/message-transformer.ts";
 import { Agent } from "../src/pi/agent.ts";
@@ -33,8 +34,8 @@ const attachments = [
 	},
 ];
 
-function runtime(files) {
-	const provider = new AttachmentsRuntimeProvider(files);
+function runtime(files, Provider = AttachmentsRuntimeProvider) {
+	const provider = new Provider(files);
 	const context = vm.createContext({
 		window: structuredClone(provider.getData()),
 		atob,
@@ -65,6 +66,33 @@ test("attachment helpers are self-contained injected functions with original byt
 		atob(attachments[1].content),
 	);
 	assert.deepEqual(JSON.parse(JSON.stringify(runtime([]).listAttachments())), []);
+});
+
+test("corrupt base64, non-string IDs and text fallbacks preserve the retained sandbox contract", () => {
+	for (const Provider of [BaselineAttachmentsRuntimeProvider, AttachmentsRuntimeProvider]) {
+		const target = runtime(attachments, Provider);
+		for (const id of [undefined, null, 7, "notes.txt"]) {
+			for (const read of [target.readTextAttachment, target.readBinaryAttachment]) {
+				assert.throws(() => read(id), { name: "Error", message: `Attachment not found: ${id}` });
+			}
+		}
+		for (const extractedText of [undefined, ""]) {
+			const corrupt = runtime(
+				[{ ...attachments[1], id: "corrupt", content: "!!!not-base64!!!", extractedText }],
+				Provider,
+			);
+			assert.throws(() => corrupt.readTextAttachment("corrupt"), {
+				name: "Error",
+				message: "Failed to decode text content for: corrupt",
+			});
+			assert.throws(() => corrupt.readBinaryAttachment("corrupt"), { name: "InvalidCharacterError" });
+			const text = runtime([{ ...attachments[1], extractedText }], Provider);
+			assert.equal(text.readTextAttachment("old-document"), atob(attachments[1].content));
+		}
+		const extracted = runtime([{ ...attachments[1], content: "!!!not-base64!!!" }], Provider);
+		assert.equal(extracted.readTextAttachment("old-document"), "héllo");
+		assert.equal(target.readTextAttachment("old-image"), atob(attachments[0].content));
+	}
 });
 
 test("old-format version-3 sessions restore attachment bytes for the REPL and subsequent Pi requests", async () => {

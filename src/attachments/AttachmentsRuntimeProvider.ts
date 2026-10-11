@@ -39,7 +39,12 @@ export class AttachmentsRuntimeProvider implements SandboxRuntimeProvider {
 			target.readTextAttachment = (id) => {
 				const attachment = target.attachments.find((file) => file.id === id);
 				if (!attachment) throw new Error(`Attachment not found: ${id}`);
-				return attachment.extractedText || atob(attachment.content);
+				if (attachment.extractedText) return attachment.extractedText;
+				try {
+					return atob(attachment.content);
+				} catch {
+					throw new Error(`Failed to decode text content for: ${id}`);
+				}
 			};
 		};
 	}
