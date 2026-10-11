@@ -379,4 +379,29 @@ test("masked API key UI adds, validates, replaces, reloads, and removes without 
 			.toBe("fixture-untested-provider-key");
 		assert.equal(requests.length, beforeUnknown, `${provider} keeps its baseline no-validation-network contract`);
 	}
+	const oauthRecord = serializeOAuthCredentials({
+		providerId: "anthropic",
+		access: "fixture-access-token",
+		refresh: "fixture-refresh-token",
+		expires: Date.now() + 60_000,
+	});
+	await page.evaluate(async (record) => {
+		await window.authFixture.setKey("anthropic", record);
+		await window.authFixture.mount("anthropic");
+	}, oauthRecord);
+	assert.equal(await page.evaluate(() => window.authFixture.readKey("anthropic")), oauthRecord);
+	assert.equal(await field.inputValue(), "");
+	assert.equal(await save.isDisabled(), true);
+	await page.locator("sitegeist-provider-key-input").evaluate((element) => element.saveKey());
+	assert.equal(await page.evaluate(() => window.authFixture.readKey("anthropic")), oauthRecord);
+	await field.fill(oauthRecord);
+	await save.click();
+	await page.getByText("Invalid", { exact: true }).waitFor();
+	assert.equal(requests.length, beforeUnknown, "OAuth JSON never enters provider or proxy validation requests");
+	assert.equal(await page.evaluate(() => window.authFixture.readKey("anthropic")), oauthRecord);
+	await field.fill("fixture-intentional-api-key-replacement");
+	await save.click();
+	await expect
+		.poll(() => page.evaluate(() => window.authFixture.readKey("anthropic")))
+		.toBe("fixture-intentional-api-key-replacement");
 });

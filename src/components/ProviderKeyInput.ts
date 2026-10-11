@@ -4,6 +4,7 @@ import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { icon } from "@mariozechner/mini-lit/dist/icons.js";
 import { html, LitElement } from "lit";
 import { Check } from "lucide";
+import { isOAuthCredentials } from "../oauth/types.js";
 import { complete, getModel } from "../pi/models.js";
 import { getAppStorage } from "../storage/app-storage.js";
 
@@ -19,6 +20,7 @@ const VALIDATION_MODELS: Readonly<Record<string, string>> = {
 };
 
 export async function validateProviderKey(provider: string, apiKey: string): Promise<boolean> {
+	if (isOAuthCredentials(apiKey.trim())) return false;
 	const model = VALIDATION_MODELS[provider] ? getModel(provider, VALIDATION_MODELS[provider]) : undefined;
 	if (!model) return true;
 	const storage = getAppStorage();
@@ -56,8 +58,8 @@ export class ProviderKeyInput extends LitElement {
 		const revision = ++this.revision;
 		const stored = await getAppStorage().providerKeys.get(this.provider);
 		if (revision !== this.revision) return;
-		this.key = stored ?? "";
-		this.saved = !!stored;
+		this.key = stored && !isOAuthCredentials(stored) ? stored : "";
+		this.saved = !!this.key;
 		this.status = "idle";
 		this.requestUpdate();
 	}
@@ -71,6 +73,7 @@ export class ProviderKeyInput extends LitElement {
 	async saveKey(): Promise<void> {
 		if (this.status === "testing") return;
 		const apiKey = this.key.trim();
+		if (!apiKey && !this.saved) return;
 		const provider = this.provider;
 		const revision = ++this.revision;
 		if (this.invalidTimer) clearTimeout(this.invalidTimer);

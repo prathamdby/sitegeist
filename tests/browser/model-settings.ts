@@ -19,6 +19,7 @@ const composer = new AgentInterface();
 composer.session = agent;
 let selections = 0;
 let closes = 0;
+const allowedProviders = ["anthropic", "openai"];
 document.body.innerHTML =
 	'<button id="settings">Settings</button><button id="models">Models</button><div id="summary"></div>';
 document.body.append(composer);
@@ -30,7 +31,7 @@ const select = (model) =>
 	});
 document
 	.querySelector("#models")
-	.addEventListener("click", () => ModelSelector.open(agent.state.model, select, ["anthropic", "openai"]));
+	.addEventListener("click", () => ModelSelector.open(agent.state.model, select, allowedProviders));
 document.querySelector("#settings").addEventListener("click", () =>
 	SettingsDialog.open([new ApiKeysOAuthTab(), new CostsTab(), new SkillsTab(), new ProxyTab(), new AboutTab()], () => {
 		closes++;
@@ -40,6 +41,35 @@ composer.onModelSelect = () => ModelSelector.open(agent.state.model, select, ["a
 window.fixture = {
 	storage,
 	agent,
+	async deferCustomModels() {
+		allowedProviders.push("aaa-local");
+		const original = storage.customProviders.getAll.bind(storage.customProviders);
+		let release: () => void = () => {};
+		const ready = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		storage.customProviders.getAll = async () => {
+			await ready;
+			return original();
+		};
+		await storage.customProviders.set({
+			id: "fixture-provider",
+			name: "aaa-local",
+			type: "openai-completions",
+			baseUrl: "https://local.invalid/v1",
+			models: [
+				{
+					...current,
+					provider: "aaa-local",
+					id: "aaa-custom",
+					api: "openai-completions",
+					baseUrl: "https://local.invalid/v1",
+				},
+			],
+		});
+		this.releaseCustomModels = release;
+	},
+	releaseCustomModels: () => {},
 	get selections() {
 		return selections;
 	},

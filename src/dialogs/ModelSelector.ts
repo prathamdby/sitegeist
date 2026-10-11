@@ -55,7 +55,15 @@ export class ModelSelector extends DialogBase {
 		this.customProvidersLoading = true;
 		try {
 			const configuration = new ModelConfiguration(() => getAppStorage().customProviders.getAll());
-			this.models = await configuration.getModels(this.allowedProviders);
+			const models = await configuration.getModels(this.allowedProviders);
+			const selected = this.getFilteredModels()[this.selectedIndex];
+			this.models = models;
+			const filtered = this.getFilteredModels();
+			const index = selected
+				? filtered.findIndex((model) => model.id === selected.id && model.provider === selected.provider)
+				: -1;
+			this.selectedIndex = index >= 0 ? index : filtered.length ? 0 : -1;
+			if (this.navigationMode === "keyboard") this.scrollToSelected();
 		} finally {
 			this.customProvidersLoading = false;
 		}
@@ -63,6 +71,14 @@ export class ModelSelector extends DialogBase {
 
 	private getFilteredModels() {
 		return filterModels(this.models, this.currentModel, this.searchQuery, this.filterThinking, this.filterVision);
+	}
+
+	private scrollToSelected() {
+		void this.updateComplete.then(() =>
+			this.querySelectorAll<HTMLElement>("[data-model-item]")[this.selectedIndex]?.scrollIntoView({
+				block: "nearest",
+			}),
+		);
 	}
 
 	private handleSelect(model: Model) {
@@ -84,11 +100,7 @@ export class ModelSelector extends DialogBase {
 			0,
 			Math.min(models.length - 1, this.selectedIndex + (event.key === "ArrowDown" ? 1 : -1)),
 		);
-		void this.updateComplete.then(() =>
-			this.querySelectorAll<HTMLElement>("[data-model-item]")[this.selectedIndex]?.scrollIntoView({
-				block: "nearest",
-			}),
-		);
+		this.scrollToSelected();
 	}
 
 	protected renderContent() {

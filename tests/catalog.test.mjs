@@ -321,3 +321,36 @@ test("catalog custom models dispatch through Pi 1.1.0 using the current API key 
 	);
 	assert.equal((await stream.result()).stopReason, "stop");
 });
+
+test("Pi clamps Ollama's preserved catalog output ceiling to available context before dispatch", async () => {
+	const models = await discoverModels("ollama", "https://ollama.invalid", undefined, {
+		fetch: async (input) =>
+			String(input).endsWith("/api/tags")
+				? Response.json({ models: [{ name: "fixture-tools" }] })
+				: Response.json({
+						capabilities: ["tools"],
+						model_info: { "general.architecture": "fixture", "fixture.context_length": 8192 },
+					}),
+	});
+	const model = { ...models[0], provider: "fixture-ollama" };
+	assert.equal(model.maxTokens, 81920);
+	let dispatched = false;
+	const result = await streamSimple(
+		model,
+		{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
+		{
+			fetch: async (_input, init) => {
+				dispatched = true;
+				const payload = JSON.parse(String(init.body));
+				const maximum = payload.max_completion_tokens ?? payload.max_tokens;
+				assert.ok(maximum > 0 && maximum < model.contextWindow);
+				return new Response(
+					'data: {"id":"fixture","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+					{ headers: { "Content-Type": "text/event-stream" } },
+				);
+			},
+		},
+	).result();
+	assert.equal(dispatched, true);
+	assert.equal(result.stopReason, "stop");
+});

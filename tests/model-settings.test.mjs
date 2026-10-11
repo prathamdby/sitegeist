@@ -211,6 +211,29 @@ test("selector focuses search, filters capabilities and clamps keyboard selectio
 	}
 });
 
+test("async custom models preserve the highlighted model identity instead of the old numeric index", async () => {
+	const page = await browser.newPage();
+	try {
+		await page.goto(origin);
+		await page.waitForFunction(() => !!window.fixture);
+		await page.evaluate(() => window.fixture.deferCustomModels());
+		await page.locator("#models").click();
+		const search = page.getByPlaceholder("Search models...");
+		await search.press("ArrowDown");
+		const highlighted = page.locator("[data-model-item].bg-accent .truncate");
+		assert.equal(await highlighted.textContent(), "claude-fable-5");
+		await page.evaluate(() => window.fixture.releaseCustomModels());
+		await page.waitForFunction(() => !document.querySelector("sitegeist-model-selector").customProvidersLoading);
+		assert.equal(await highlighted.textContent(), "claude-fable-5");
+		assert.equal(await page.locator("sitegeist-model-selector").evaluate((element) => element.selectedIndex), 2);
+		await search.press("Enter");
+		await page.waitForFunction(() => window.fixture.selections === 1);
+		assert.equal(await page.evaluate(() => window.fixture.agent.state.model.id), "claude-fable-5");
+	} finally {
+		await page.close();
+	}
+});
+
 test("settings keep tab order and mounted state, close once, and persist proxy toggles and URL", async () => {
 	const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
 	try {
