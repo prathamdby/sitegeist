@@ -395,7 +395,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			}
 
 			if (!currentSessionId && shouldSaveSession(messages)) {
-				currentSessionId = crypto.randomUUID();
+				// Reuse the agent's routing id as the persisted session id so the
+				// first turn and later turns present one id to the provider.
+				currentSessionId = agent.sessionId ?? crypto.randomUUID();
 				agent.sessionId = currentSessionId;
 
 				port
