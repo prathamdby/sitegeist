@@ -57,12 +57,25 @@ before(async () => {
 				lit: `${root}node_modules/lit`,
 			},
 		});
-	const [seed, sidepanel] = await Promise.all([
+	const [seed, sidepanel, baseline] = await Promise.all([
 		sidepanelBuild("tests/browser/chat-sidepanel.ts"),
 		sidepanelBuild("src/sidepanel.ts"),
+		sidepanelBuild("tests/browser/chat-shell-baseline.ts"),
 	]);
 	const css = readFileSync(join(directory, "app.css"));
 	server = createServer((request, response) => {
+		if (request.url === "/baseline.js") {
+			response.setHeader("Content-Type", "text/javascript");
+			response.end(baseline.outputFiles[0].text);
+			return;
+		}
+		if (request.url === "/baseline") {
+			response.setHeader("Content-Type", "text/html");
+			response.end(
+				'<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><script type="module" src="/baseline.js"></script>',
+			);
+			return;
+		}
 		if (request.url === "/seed.js" || request.url === "/sidepanel.js") {
 			response.setHeader("Content-Type", "text/javascript");
 			response.end(request.url === "/seed.js" ? seed.outputFiles[0].text : sidepanel.outputFiles[0].text);
@@ -174,6 +187,64 @@ test("API key denial and before-send rejection retain the complete composer", as
 		assert.equal(await page.evaluate(() => window.chatFixture.sendDirect("preserved")), "Fixture rejected");
 		assert.equal(await page.locator("textarea").inputValue(), "preserved");
 		assert.equal(await page.locator("attachment-tile").count(), 1);
+	} finally {
+		await page.close();
+	}
+});
+
+test("true pre-run prompt rejection restores the draft and attachments without overwriting a newer draft", async () => {
+	const page = await fixture();
+	try {
+		await page.evaluate(() => {
+			window.chatFixture.setInput("Recover this draft", [
+				{
+					id: "file",
+					type: "document",
+					fileName: "saved.txt",
+					mimeType: "text/plain",
+					size: 4,
+					content: "dGVzdA==",
+					extractedText: "test",
+				},
+			]);
+			window.chatFixture.agent.prompt = async () => {
+				throw new Error("Fixture pre-run rejection");
+			};
+		});
+		assert.equal(
+			await page.evaluate(() => window.chatFixture.sendDirect("Recover this draft")),
+			"Fixture pre-run rejection",
+		);
+		assert.equal(await page.locator("textarea").inputValue(), "Recover this draft");
+		assert.equal(await page.locator("attachment-tile").count(), 1);
+		await page.evaluate(() => {
+			window.chatFixture.agent.prompt = async () => {
+				window.chatFixture.setInput("Newer draft");
+				throw new Error("Fixture pre-run rejection");
+			};
+		});
+		await page.evaluate(() => window.chatFixture.sendDirect("Recover this draft"));
+		assert.equal(await page.locator("textarea").inputValue(), "Newer draft");
+	} finally {
+		await page.close();
+	}
+});
+
+test("legacy assistant usage without cost or usage still renders the conversation and token footer", async () => {
+	const page = await fixture();
+	try {
+		await page.evaluate(async () => {
+			const { agent, controller } = window.chatFixture;
+			const message = structuredClone(agent.state.messages.find((item) => item.role === "assistant"));
+			delete message.usage.cost;
+			const withoutUsage = { ...structuredClone(message), timestamp: 42 };
+			delete withoutUsage.usage;
+			agent.replaceMessages([message, withoutUsage]);
+			controller.requestUpdate();
+			await controller.updateComplete;
+		});
+		assert.equal(await page.locator("sitegeist-assistant-message").count(), 2);
+		assert.equal((await page.locator("sitegeist-agent-interface .h-5").innerText()).trim(), "↑1.2k ↓234 R500");
 	} finally {
 		await page.close();
 	}
@@ -425,6 +496,21 @@ test("attachment limits skip oversized and unsupported files while accepting lat
 		await picker.setInputFiles({ name: "eleventh.txt", mimeType: "text/plain", buffer: Buffer.from("extra") });
 		assert.equal(alerts.at(-1), "Maximum 10 files allowed");
 		assert.equal(await page.locator("attachment-tile").count(), 10);
+		await page.evaluate(() => window.chatFixture.setInput("", []));
+		const transfer = await page.evaluateHandle(() => {
+			const data = new DataTransfer();
+			data.items.add(new File(["binary fixture"], "unsupported.exe", { type: "application/octet-stream" }));
+			data.items.add(new File(["print('fixture')"], "source.py", { type: "text/plain" }));
+			return data;
+		});
+		await page.locator("sitegeist-message-editor > div").dispatchEvent("drop", { dataTransfer: transfer });
+		await page.waitForFunction(() => document.querySelector("attachment-tile")?.attachment.fileName === "source.py");
+		assert.equal(await page.locator("attachment-tile").count(), 1);
+		assert.equal(
+			alerts.at(-1),
+			"Failed to process unsupported.exe: Error: Unsupported file type: application/octet-stream",
+		);
+		await transfer.dispose();
 	} finally {
 		await page.close();
 	}
@@ -509,13 +595,20 @@ test("light, narrow and dark fixtures retain composer dimensions and produce reu
 		["wide-dark", 1200, true],
 	]) {
 		const page = await fixture(width);
+		const baseline = await browser.newPage({ viewport: { width, height: 800 } });
+		baseline.on("pageerror", (error) => console.error(error.stack ?? error.message));
 		try {
-			if (dark) await page.evaluate(() => document.documentElement.classList.add("dark"));
+			await baseline.goto(`${origin}/baseline`);
+			await baseline.waitForFunction(() => document.body.dataset.baselineReady === "true");
+			if (dark)
+				await Promise.all(
+					[page, baseline].map((view) => view.evaluate(() => document.documentElement.classList.add("dark"))),
+				);
 			await page.waitForTimeout(350);
 			const bounds = await page.locator("sitegeist-message-editor > div").boundingBox();
-			assert.equal(bounds.height, 104);
+			const expected = await baseline.locator("message-editor > div").boundingBox();
+			assert.deepEqual(bounds, expected);
 			assert.equal(bounds.width, width === 1200 ? 752 : 374);
-			assert.equal(bounds.y, 676);
 			if (process.env.CHAT_RENDER_DIR) {
 				mkdirSync(process.env.CHAT_RENDER_DIR, { recursive: true });
 				await page.screenshot({ path: join(process.env.CHAT_RENDER_DIR, `${name}-after.png`) });
@@ -526,6 +619,7 @@ test("light, narrow and dark fixtures retain composer dimensions and produce reu
 			}
 		} finally {
 			await page.close();
+			await baseline.close();
 		}
 	}
 });

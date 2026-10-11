@@ -214,6 +214,84 @@ test("stream updates preserve one assistant, reasoning state and partial tool re
 	await p.close();
 });
 
+test("message identity keeps expansion on its row after removal and does not leak state into a replacement", async () => {
+	const p = await page();
+	try {
+		await p.evaluate(() =>
+			window.fixture.local({
+				messages: [
+					window.fixture.assistant,
+					{ ...structuredClone(window.fixture.assistant), timestamp: window.fixture.assistant.timestamp },
+				],
+			}),
+		);
+		await p.locator(".thinking-header").last().click();
+		await p.evaluate(async () => {
+			const list = document.querySelector("sitegeist-message-list");
+			list.messages = [list.messages[1]];
+			await list.updateComplete;
+		});
+		assert.equal(await p.locator("sitegeist-thinking-block markdown-block").count(), 1);
+		await p.evaluate(async () => {
+			const list = document.querySelector("sitegeist-message-list");
+			list.messages = [
+				{ ...structuredClone(window.fixture.assistant), timestamp: window.fixture.assistant.timestamp },
+			];
+			await list.updateComplete;
+		});
+		assert.equal(await p.locator("sitegeist-thinking-block markdown-block").count(), 0);
+	} finally {
+		await p.close();
+	}
+});
+
+test("console copy denial is handled and its reset timer is cancelled when the row disconnects", async () => {
+	const p = await page();
+	const errors = [];
+	p.on("pageerror", (error) => errors.push(error.message));
+	try {
+		await p.evaluate(() => {
+			window.fixture.localTool({
+				toolCall: { type: "toolCall", id: "copy", name: "bash", arguments: { command: "fixture" } },
+			});
+			Object.defineProperty(navigator, "clipboard", {
+				configurable: true,
+				value: {
+					writeText: async () => {
+						throw new DOMException("Denied", "NotAllowedError");
+					},
+				},
+			});
+		});
+		await p.getByTitle("Copy output").click();
+		assert.deepEqual(errors, []);
+		assert.equal(await p.getByTitle("Copy output").innerText(), "");
+		await p.evaluate(() => {
+			Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => {} } });
+			const timers = new Set();
+			const schedule = window.setTimeout.bind(window);
+			const cancel = window.clearTimeout.bind(window);
+			window.setTimeout = (callback, delay, ...args) => {
+				const id = schedule(callback, delay, ...args);
+				if (delay === 2000) timers.add(id);
+				return id;
+			};
+			window.clearTimeout = (id) => {
+				timers.delete(id);
+				cancel(id);
+			};
+			window.copyTimers = timers;
+		});
+		await p.getByTitle("Copy output").click();
+		await p.getByText("Copied!", { exact: true }).waitFor();
+		assert.equal(await p.evaluate(() => window.copyTimers.size), 1);
+		await p.evaluate(() => document.querySelector("sitegeist-console-block").remove());
+		assert.equal(await p.evaluate(() => window.copyTimers.size), 0);
+	} finally {
+		await p.close();
+	}
+});
+
 test("built-in tools and JSON mode match baseline rendered text", async () => {
 	const p = await page();
 	for (const [name, args] of [

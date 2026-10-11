@@ -14,8 +14,10 @@ export class MessageList extends LightElement {
 	@property({ type: Object }) pendingToolCalls?: Set<string>;
 	@property({ type: Object }) toolResultsById?: Map<string, ToolResultMessage>;
 	@property({ type: Object }) streamingMessage?: AssistantMessage;
+	@property({ attribute: false }) messageKeys?: WeakMap<AgentMessage, object>;
 	@property({ type: Boolean }) isStreaming = false;
 	@property({ attribute: false }) onCostClick?: () => void;
+	private readonly streamingRowKey = {};
 
 	override render() {
 		const results = new Map<string, ToolResultMessage>();
@@ -25,7 +27,8 @@ export class MessageList extends LightElement {
 		if (this.streamingMessage && !messages.includes(this.streamingMessage)) messages.push(this.streamingMessage);
 		return html`<div class="flex flex-col gap-3">${repeat(
 			messages,
-			(_message, index) => index,
+			(message) =>
+				this.messageKeys?.get(message) ?? (message === this.streamingMessage ? this.streamingRowKey : message),
 			(message) => {
 				const custom = renderMessage(message);
 				if (custom) return custom;

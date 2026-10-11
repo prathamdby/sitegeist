@@ -27,8 +27,11 @@ export class AgentInterface extends LitElement {
 	private subscribedAgent?: Agent;
 	private observer?: ResizeObserver;
 	private autoScroll = true;
+	private lastClientHeight = 0;
 	private streaming = false;
 	private streamingMessage?: AssistantMessage;
+	private messageKeys = new WeakMap<AgentMessage, object>();
+	private streamingKey?: object;
 	private frame?: number;
 	private preparingSend = false;
 	private results = new Map<string, ToolResultMessage>();
@@ -77,6 +80,8 @@ export class AgentInterface extends LitElement {
 		this.subscribedAgent = this.session;
 		this.streaming = this.session?.state.isStreaming ?? false;
 		this.streamingMessage = undefined;
+		this.messageKeys = new WeakMap();
+		this.streamingKey = undefined;
 		this.results.clear();
 		this.unsubscribe = this.session?.subscribe((event) => this.handleEvent(event));
 	}
@@ -88,8 +93,11 @@ export class AgentInterface extends LitElement {
 
 	private handleEvent(event: AgentEvent): void {
 		if (event.type === "agent_start") this.streaming = true;
+		if (event.type === "message_start" && event.message.role === "assistant") this.streamingKey = {};
 		if (event.type === "message_update" && event.message.role === "assistant") {
 			this.streamingMessage = structuredClone(event.message);
+			this.streamingKey ??= {};
+			this.messageKeys.set(this.streamingMessage, this.streamingKey);
 			if (this.frame === undefined)
 				this.frame = requestAnimationFrame(() => {
 					this.frame = undefined;
@@ -98,6 +106,10 @@ export class AgentInterface extends LitElement {
 			return;
 		}
 		if (event.type === "message_end") {
+			if (event.message.role === "assistant" && this.streamingKey) {
+				this.messageKeys.set(event.message, this.streamingKey);
+				this.streamingKey = undefined;
+			}
 			this.cancelFrame();
 			this.streamingMessage = undefined;
 		}
@@ -116,6 +128,7 @@ export class AgentInterface extends LitElement {
 		if (event.type === "agent_end") {
 			this.streaming = false;
 			this.streamingMessage = undefined;
+			this.streamingKey = undefined;
 			this.results.clear();
 			this.cancelFrame();
 		}
@@ -127,9 +140,21 @@ export class AgentInterface extends LitElement {
 		if (element && this.autoScroll) element.scrollTop = element.scrollHeight;
 	}
 
+	private handleScroll = (): void => {
+		const element = this.scrollRef.value;
+		if (!element) return;
+		const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 50;
+		if (element.clientHeight === this.lastClientHeight || nearBottom) this.autoScroll = nearBottom;
+		this.lastClientHeight = element.clientHeight;
+	};
+
 	protected override updated(): void {
 		if (!this.observer && this.scrollRef.value) {
-			this.observer = new ResizeObserver(() => this.scrollToBottom());
+			this.lastClientHeight = this.scrollRef.value.clientHeight;
+			this.observer = new ResizeObserver(() => {
+				this.scrollToBottom();
+				this.lastClientHeight = this.scrollRef.value?.clientHeight ?? 0;
+			});
 			this.observer.observe(this.scrollRef.value);
 			const list = this.scrollRef.value.firstElementChild;
 			if (list) this.observer.observe(list);
@@ -147,12 +172,27 @@ export class AgentInterface extends LitElement {
 			if (!key && !(await this.onApiKeyRequired?.(provider))) return;
 			await this.onBeforeSend?.();
 			if (this.session !== agent) return;
+			const draft = this.editor.value;
+			const draftAttachments = this.editor.attachments;
 			this.editor.value = "";
 			this.editor.attachments = [];
 			this.autoScroll = true;
-			if (attachments.length) {
-				await agent.prompt({ role: "user-with-attachments", content: input, attachments, timestamp: Date.now() });
-			} else await agent.prompt(input);
+			try {
+				if (attachments.length) {
+					await agent.prompt({
+						role: "user-with-attachments",
+						content: input,
+						attachments,
+						timestamp: Date.now(),
+					});
+				} else await agent.prompt(input);
+			} catch (error) {
+				if (!this.editor.value && this.editor.attachments.length === 0) {
+					this.editor.value = draft;
+					this.editor.attachments = draftAttachments;
+				}
+				throw error;
+			}
 		} finally {
 			this.preparingSend = false;
 			this.requestUpdate();
@@ -171,9 +211,9 @@ export class AgentInterface extends LitElement {
 		for (const message of messages) {
 			if (message.role !== "assistant") continue;
 			for (const field of ["input", "output", "cacheRead", "cacheWrite", "totalTokens"] as const)
-				usage[field] += message.usage[field];
+				usage[field] += message.usage?.[field] ?? 0;
 			for (const field of ["input", "output", "cacheRead", "cacheWrite", "total"] as const)
-				usage.cost[field] += message.usage.cost[field];
+				usage.cost[field] += message.usage?.cost?.[field] ?? 0;
 		}
 		return usage;
 	}
@@ -201,11 +241,8 @@ export class AgentInterface extends LitElement {
 		};
 		return html`
 			<div class="flex flex-col h-full bg-background text-foreground">
-				<div ${ref(this.scrollRef)} class="flex-1 overflow-y-auto" @scroll=${() => {
-					const node = this.scrollRef.value;
-					if (node) this.autoScroll = node.scrollHeight - node.scrollTop - node.clientHeight <= 50;
-				}}>
-					<div class="max-w-3xl mx-auto p-4 pb-0"><div class="flex flex-col gap-3"><sitegeist-message-list .messages=${messages} .tools=${state?.tools} .pendingToolCalls=${state?.pendingToolCalls} .streamingMessage=${this.streamingMessage} .isStreaming=${this.streaming} .toolResultsById=${toolResultsById} .onCostClick=${this.onCostClick}></sitegeist-message-list>${this.streaming && !this.streamingMessage ? html`<div><span class="mx-4 inline-block w-2 h-4 bg-muted-foreground animate-pulse"></span></div>` : ""}</div></div>
+				<div ${ref(this.scrollRef)} class="flex-1 overflow-y-auto" @scroll=${this.handleScroll}>
+					<div class="max-w-3xl mx-auto p-4 pb-0"><div class="flex flex-col gap-3"><sitegeist-message-list .messages=${messages} .tools=${state?.tools} .pendingToolCalls=${state?.pendingToolCalls} .streamingMessage=${this.streamingMessage} .messageKeys=${this.messageKeys} .isStreaming=${this.streaming} .toolResultsById=${toolResultsById} .onCostClick=${this.onCostClick}></sitegeist-message-list>${this.streaming && !this.streamingMessage ? html`<div><span class="mx-4 inline-block w-2 h-4 bg-muted-foreground animate-pulse"></span></div>` : ""}</div></div>
 				</div>
 				<div class="shrink-0"><div class="max-w-3xl mx-auto px-2">${this.editor}<div class="text-xs text-muted-foreground flex justify-between items-center h-5"><div class="flex items-center gap-1"></div><div class="flex ml-auto items-center gap-3"><span class="cursor-pointer hover:text-foreground transition-colors" @click=${this.onCostClick}>${formatUsage(this.totalUsage(messages))}</span></div></div></div></div>
 			</div>

@@ -1,35 +1,14 @@
-import { type AssistantMessage, AssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { setLanguage } from "@mariozechner/mini-lit";
 import type { Attachment } from "@mariozechner/pi-web-ui/dist/utils/attachment-utils.js";
 import { ChatPanel } from "../../src/chat/ChatPanel.js";
 import { Agent } from "../../src/pi/agent.js";
-import { getModel } from "../../src/pi/models.js";
 import { SitegeistAppStorage, setAppStorage } from "../../src/storage/app-storage.js";
+import { assistant, initialMessages, model } from "./chat-fixture-data.js";
 
 const storage = new SitegeistAppStorage();
 setAppStorage(storage);
 const events: unknown[][] = [];
-const model = getModel("anthropic", "claude-sonnet-4-5");
-const usage = {
-	input: 1234,
-	output: 234,
-	cacheRead: 500,
-	cacheWrite: 0,
-	totalTokens: 1968,
-	cost: { input: 0.003702, output: 0.00351, cacheRead: 0.00015, cacheWrite: 0, total: 0.007362 },
-};
-function assistant(text: string): AssistantMessage {
-	return {
-		role: "assistant",
-		content: [{ type: "text", text }],
-		api: model.api,
-		provider: model.provider,
-		model: model.id,
-		usage,
-		stopReason: "stop",
-		timestamp: Date.now(),
-	};
-}
 let releaseStream: () => void = () => {};
 let holdStream = false;
 let delayStreamStart = false;
@@ -38,12 +17,7 @@ const agent = new Agent({
 	initialState: {
 		model,
 		thinkingLevel: "medium",
-		messages: [
-			{ role: "user", content: "Summarize this page and suggest the next step.", timestamp: 0 },
-			assistant(
-				"The page contains a concise project overview.\n\n**Next step:** review the settings before continuing.",
-			),
-		],
+		messages: initialMessages(),
 	},
 	streamFn: (_model, _context, options) => {
 		const stream = new AssistantMessageEventStream();

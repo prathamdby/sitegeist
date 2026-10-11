@@ -16,7 +16,7 @@ export function formatUsage(usage: Usage): string {
 		usage.output ? `↓${formatTokenCount(usage.output)}` : "",
 		usage.cacheRead ? `R${formatTokenCount(usage.cacheRead)}` : "",
 		usage.cacheWrite ? `W${formatTokenCount(usage.cacheWrite)}` : "",
-		usage.cost.total ? formatCost(usage.cost.total) : "",
+		usage.cost?.total ? formatCost(usage.cost.total) : "",
 	]
 		.filter(Boolean)
 		.join(" ");

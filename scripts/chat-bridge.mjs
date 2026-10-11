@@ -5,6 +5,7 @@ export function chatBridge(root) {
 	return {
 		name: "sitegeist-chat-services",
 		setup(build) {
+			build.initialOptions.tsconfig ??= resolve(root, "tsconfig.build.json");
 			build.onResolve({ filter: /^@mariozechner\/pi-web-ui\/dist\// }, (args) => ({
 				path: realpathSync(resolve(root, "node_modules", args.path)),
 			}));

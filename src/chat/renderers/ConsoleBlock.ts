@@ -9,6 +9,14 @@ export class ConsoleBlock extends LightElement {
 	@property() content = "";
 	@property() variant: "default" | "error" = "default";
 	@state() private copied = false;
+	private copyTimer?: number;
+
+	override disconnectedCallback(): void {
+		super.disconnectedCallback();
+		clearTimeout(this.copyTimer);
+		this.copyTimer = undefined;
+		this.copied = false;
+	}
 
 	override updated(): void {
 		const scroll = this.querySelector(".console-scroll");
@@ -16,10 +24,17 @@ export class ConsoleBlock extends LightElement {
 	}
 
 	private async copy(): Promise<void> {
-		await navigator.clipboard.writeText(this.content);
+		try {
+			await navigator.clipboard.writeText(this.content);
+		} catch {
+			return;
+		}
+		if (!this.isConnected) return;
 		this.copied = true;
-		setTimeout(() => {
+		clearTimeout(this.copyTimer);
+		this.copyTimer = window.setTimeout(() => {
 			this.copied = false;
+			this.copyTimer = undefined;
 		}, 2000);
 	}
 
