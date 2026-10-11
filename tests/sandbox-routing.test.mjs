@@ -230,13 +230,15 @@ test("user-script routing enforces transport, tab, frame and world bindings", as
 	const h = routerHarness(t);
 	const seen = [];
 	const responses = [];
+	let lateReply;
 	h.register(
 		"script",
 		[
 			{
 				async handleMessage(message, respond) {
 					seen.push(message);
-					respond({ success: true });
+					if (message.type === "hold") lateReply = respond;
+					else respond({ success: true });
 				},
 			},
 		],
@@ -287,8 +289,18 @@ test("user-script routing enforces transport, tab, frame and world bindings", as
 	assert.equal(seen[0].runtimeTabId, 4);
 	assert.equal(Object.hasOwn(seen[0], "capability"), false);
 	assert.equal(Object.hasOwn(responses[0], "capability"), false);
+	assert.equal(h.userMessage(request("valid"), sender), false);
+	assert.equal(seen.length, 1);
 	assert.equal(h.userMessage(request("no-sender-world"), { ...sender, userScriptWorldId: undefined }), true);
 	assert.equal(seen.length, 2);
+	assert.equal(h.userMessage(request("wrong-channel", { channel: "other" }), sender), false);
+	assert.equal(
+		h.userMessage(request("late", { type: "hold" }), sender, (response) => responses.push(response)),
+		true,
+	);
+	h.router.unregisterSandbox("script");
+	lateReply({ success: true });
+	assert.equal(responses.length, 1);
 	h.register("iframe-only", [], [], { transport: "sandbox-iframe" });
 	assert.equal(h.userMessage(envelope("iframe-only"), sender), false);
 });

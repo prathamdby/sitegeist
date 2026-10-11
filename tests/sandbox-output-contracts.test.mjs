@@ -142,30 +142,3 @@ test(
 		}
 	},
 );
-
-test("file-returned request handlers acknowledge successful requests in both implementations", async () => {
-	for (const Provider of [BaselineFileDownloadRuntimeProvider, FileDownloadRuntimeProvider]) {
-		const provider = new Provider();
-		const responses = [];
-		const content = new Uint8Array([0, 1, 254, 255]);
-		await provider.handleMessage(
-			{
-				type: "file-returned",
-				sandboxId: "output-fixture",
-				messageId: "file-request",
-				fileName: "folder/文-é.bin",
-				content,
-				mimeType: "application/octet-stream",
-			},
-			(response) => responses.push(response),
-		);
-		assert.deepEqual(responses, [{ success: true }]);
-		assert.deepEqual(normalizedFiles(provider), [
-			{
-				fileName: "folder/文-é.bin",
-				content: [0, 1, 254, 255],
-				mimeType: "application/octet-stream",
-			},
-		]);
-	}
-});

@@ -13,7 +13,7 @@ import { chatBridge } from "../scripts/chat-bridge.mjs";
 import { settingsBridge } from "../scripts/settings-bridge.mjs";
 import { storageBridge } from "../scripts/storage-bridge.mjs";
 import { RuntimeMessageBridge } from "../src/sandbox/RuntimeMessageBridge.ts";
-import { RUNTIME_MESSAGE_ROUTER, RuntimeMessageRouter } from "../src/sandbox/RuntimeMessageRouter.ts";
+import { RUNTIME_MESSAGE_ROUTER } from "../src/sandbox/RuntimeMessageRouter.ts";
 import { SitegeistAppStorage, setAppStorage } from "../src/storage/app-storage.ts";
 import { BrowserJsRuntimeProvider, NavigateRuntimeProvider } from "../src/tools/repl/runtime-providers.ts";
 import { buildWrapperCode, requestUserScriptsPermission } from "../src/tools/repl/userscripts-helpers.ts";
@@ -78,74 +78,6 @@ async function eventually(predicate) {
 	}
 	assert.ok(predicate(), "Expected async fixture condition");
 }
-
-test("user-script routing rejects wrong tab/frame/world/channel and drops replies after unregister", async () => {
-	const h = harness();
-	const router = new RuntimeMessageRouter();
-	const responses = [];
-	const capability = crypto.randomUUID();
-	let calls = 0;
-	let routed;
-	let reply;
-	router.registerSandbox(
-		"bound",
-		[
-			{
-				async handleMessage(message, respond) {
-					calls++;
-					routed = message;
-					reply = respond;
-				},
-			},
-		],
-		[],
-		{ transport: "user-script", tabId: 7, frameId: 0, worldId, capability },
-	);
-	const message = {
-		type: "echo",
-		channel: "sitegeist-runtime",
-		sandboxId: "bound",
-		messageId: "request-1",
-		worldId,
-		capability,
-		runtimeTabId: 999,
-	};
-	const sender = { id: h.chrome.runtime.id, tab: { id: 7 }, frameId: 0 };
-	for (const invalid of [
-		{ ...sender, tab: { id: 8 } },
-		{ ...sender, frameId: 1 },
-		{ ...sender, userScriptWorldId: "other-world" },
-		{ ...sender, id: "another-extension" },
-	]) {
-		assert.deepEqual(
-			h.onUserScriptMessage.emit(message, invalid, (value) => responses.push(value)),
-			[false],
-		);
-	}
-	h.onUserScriptMessage.emit({ ...message, channel: "other-channel" }, sender, (value) => responses.push(value));
-	h.onUserScriptMessage.emit({ ...message, worldId: "other-world" }, sender, (value) => responses.push(value));
-	h.onUserScriptMessage.emit({ ...message, capability: undefined }, sender, (value) => responses.push(value));
-	h.onUserScriptMessage.emit({ ...message, capability: "incorrect-capability" }, sender, (value) =>
-		responses.push(value),
-	);
-	assert.equal(calls, 0);
-	assert.deepEqual(
-		h.onUserScriptMessage.emit(message, sender, (value) => responses.push(value)),
-		[true],
-	);
-	assert.equal(calls, 1);
-	assert.equal(routed.runtimeTabId, 7);
-	assert.equal("capability" in routed, false);
-	assert.deepEqual(
-		h.onUserScriptMessage.emit(message, sender, (value) => responses.push(value)),
-		[false],
-	);
-	assert.equal(calls, 1);
-	router.unregisterSandbox("bound");
-	reply({ success: true });
-	assert.deepEqual(responses, []);
-	assert.equal(h.onUserScriptMessage.listeners.size, 0);
-});
 
 test("browserjs unregisters, settles once, and terminates the original tab on abort", async () => {
 	let injected;
