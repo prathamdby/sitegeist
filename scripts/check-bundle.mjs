@@ -65,6 +65,15 @@ assert.deepEqual(
 	[],
 	"Legacy attachment and document extraction implementations must not enter the browser bundle",
 );
+assert.deepEqual(
+	inputs.filter((path) =>
+		/pi-(?:mono\/packages\/web-ui|web-ui)\/(?:dist|src)\/(?:tools\/(?:artifacts\/|javascript-repl\.)|components\/(?:SandboxedIframe\.|sandbox\/))/.test(
+			path,
+		),
+	),
+	[],
+	"Legacy artifacts, debug REPL and sandbox implementations must not enter the browser bundle",
+);
 const runtime = await build({
 	plugins: [storageBridge(root), settingsBridge(root), chatBridge(root)],
 	absWorkingDir: root,

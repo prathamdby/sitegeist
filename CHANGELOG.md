@@ -10,11 +10,14 @@
 - Replaced the chat shell, composer and message/tool rendering with local components driven by Pi 1.1.0, retaining attachment and artifact services and sequential navigation steering behavior.
 - Replaced attachment processing, previews, REPL file access and document extraction with local implementations, preserving upload flows, parser formats and saved attachment bytes.
 - Replaced production REPL and skill sandbox execution with a local runtime bridge, preserving browser helpers, attachment reads, cancellation and extension CSP.
+- Replaced artifact storage, previews, downloads and the debug JavaScript REPL with local implementations, retaining the existing controls and stored artifact messages.
 
 ### Fixed
 
 - Bound REPL Stop messages and overlay cleanup to their originating tab and execution, rejecting stale or forged requests.
 - Quoted native-input selectors in debugger error expressions and reported missing browser-script results as execution failures.
+- Enforced read-only artifact access from isolated HTML previews and excluded failed artifact operations from session restoration.
+- Escaped sandbox identifiers in runtime scripts so script-data markers in filenames cannot swallow downloaded HTML documents.
 
 ### Removed
 

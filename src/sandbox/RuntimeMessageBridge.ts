@@ -136,6 +136,6 @@ export const RuntimeMessageBridge = {
 		if (!options.sandboxId || !["sandbox-iframe", "user-script"].includes(options.context)) {
 			throw new Error("Invalid runtime bridge options");
 		}
-		return `(${installRuntimeBridge.toString()})(${JSON.stringify(options)});`;
+		return `(${installRuntimeBridge.toString()})(${JSON.stringify(options).replace(/</g, "\\u003c")});`;
 	},
 };
