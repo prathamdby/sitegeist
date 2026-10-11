@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { chatBridge } from "./chat-bridge.mjs";
 import { settingsBridge } from "./settings-bridge.mjs";
 import { storageBridge } from "./storage-bridge.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const result = await build({
-	plugins: [storageBridge(root), settingsBridge(root)],
+	plugins: [storageBridge(root), settingsBridge(root), chatBridge(root)],
 	absWorkingDir: root,
 	entryPoints: ["src/sidepanel.ts", "src/debug.ts", "src/background.ts"],
 	bundle: true,
@@ -46,4 +47,13 @@ assert.deepEqual(
 	"Legacy selector/settings implementations must not enter the browser bundle",
 );
 assert.ok(inputs.some((path) => path.includes("@earendil-works/pi-ai/dist/models.js")));
+assert.deepEqual(
+	inputs.filter((path) =>
+		/pi-(?:mono\/packages\/web-ui|web-ui)\/(?:dist|src)\/(?:ChatPanel\.|components\/(?:AgentInterface|MessageEditor|MessageList|Messages|StreamingMessageContainer|ThinkingBlock|message-renderer-registry)\.|tools\/(?:renderer-registry\.|renderers\/(?:BashRenderer|CalculateRenderer|DefaultRenderer|GetCurrentTimeRenderer)\.))/.test(
+			path,
+		),
+	),
+	[],
+	"Legacy chat shell and renderer implementations must not enter the browser bundle",
+);
 console.log(`Browser bundle verified: ${inputs.length} inputs, zero legacy SDK implementations.`);

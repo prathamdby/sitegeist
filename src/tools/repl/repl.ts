@@ -1,20 +1,22 @@
 import { i18n } from "@mariozechner/mini-lit";
 import {
-	type Attachment,
-	registerToolRenderer,
-	renderCollapsibleHeader,
-	renderHeader,
 	type SandboxFile,
 	SandboxIframe,
 	type SandboxResult,
-	type SandboxRuntimeProvider,
-	type ToolRenderer,
-	type ToolRenderResult,
-} from "@mariozechner/pi-web-ui";
+} from "@mariozechner/pi-web-ui/dist/components/SandboxedIframe.js";
+import type { SandboxRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/SandboxRuntimeProvider.js";
+import type { Attachment } from "@mariozechner/pi-web-ui/dist/utils/attachment-utils.js";
 import { html } from "lit";
 import { createRef, ref } from "lit/directives/ref.js";
 import { Code } from "lucide";
 import { type Static, Type } from "typebox";
+import {
+	registerToolRenderer,
+	renderCollapsibleHeader,
+	renderHeader,
+	type ToolRenderer,
+	type ToolRenderResult,
+} from "../../chat/renderers/index.js";
 import type { AgentTool } from "../../pi/agent.js";
 import type { ToolResultMessage } from "../../pi/models.js";
 import { REPL_TOOL_DESCRIPTION } from "../../prompts/prompts.js";

@@ -2,14 +2,11 @@ import { icon } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
-import {
-	ChatPanel,
-	createExtractDocumentTool,
-	// PersistentStorageDialog,
-	setShowJsonMode,
-} from "@mariozechner/pi-web-ui";
+import { createExtractDocumentTool } from "@mariozechner/pi-web-ui/dist/tools/extract-document.js";
 import { html, render } from "lit";
 import { History, Plus, Settings } from "lucide";
+import { ChatPanel } from "./chat/ChatPanel.js";
+import { setShowJsonMode } from "./chat/renderers/index.js";
 import { Toast } from "./components/Toast.js";
 import { AboutTab } from "./dialogs/AboutTab.js";
 import { ApiKeyOrOAuthDialog } from "./dialogs/ApiKeyOrOAuthDialog.js";
@@ -41,6 +38,7 @@ import {
 } from "./pi/agent.js";
 import { CostRecorder } from "./pi/costs.js";
 import { getModel, getModels, getProviders, ModelConfiguration } from "./pi/models.js";
+import { navigationSteeringGate } from "./pi/navigation-steering.js";
 import { applyModelSelection, DEFAULT_MODELS, resolveInitialModel } from "./pi/selection.js";
 import { createStreamFn } from "./pi/stream.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
@@ -348,6 +346,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		},
 		convertToLlm: browserMessageTransformer,
 		toolExecution: "sequential",
+		beforeToolCall: async () => navigationSteeringGate(agent),
 		prepareRequest: async ({ model }) => {
 			const resolved = await modelConfiguration.resolveModel(model);
 			if (!resolved) throw new Error("The selected model is no longer configured. Select a model again.");

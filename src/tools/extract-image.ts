@@ -1,7 +1,12 @@
-import { registerToolRenderer, renderHeader, type ToolRenderer, type ToolRenderResult } from "@mariozechner/pi-web-ui";
 import { html } from "lit";
 import { Image as ImageIcon } from "lucide";
 import { type Static, Type } from "typebox";
+import {
+	registerToolRenderer,
+	renderHeader,
+	type ToolRenderer,
+	type ToolRenderResult,
+} from "../chat/renderers/index.js";
 import type { AgentTool, AgentToolResult } from "../pi/agent.js";
 import type { ImageContent, TextContent, ToolResultMessage } from "../pi/models.js";
 

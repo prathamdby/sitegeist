@@ -8,6 +8,7 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { build } from "esbuild";
+import { chatBridge } from "../scripts/chat-bridge.mjs";
 import { settingsBridge } from "../scripts/settings-bridge.mjs";
 import { storageBridge } from "../scripts/storage-bridge.mjs";
 import { filterModels, fuzzyScore } from "../src/pi/model-search.ts";
@@ -30,7 +31,7 @@ before(async () => {
 		write: false,
 		platform: "browser",
 		format: "esm",
-		plugins: [storageBridge(root), settingsBridge(root)],
+		plugins: [storageBridge(root), settingsBridge(root), chatBridge(root)],
 		define: { "process.env.NODE_ENV": '"test"', global: "globalThis" },
 		inject: [`${root}scripts/process-shim.js`],
 		alias: {
@@ -180,7 +181,10 @@ test("selector focuses search, filters capabilities and clamps keyboard selectio
 			await page.evaluate(async () => (await window.fixture.storage.settings.get("lastUsedModel")).id),
 			"claude-sonnet-4-6",
 		);
-		await page.locator("agent-interface").getByRole("button", { name: "claude-sonnet-4-6", exact: true }).waitFor();
+		await page
+			.locator("sitegeist-agent-interface")
+			.getByRole("button", { name: "claude-sonnet-4-6", exact: true })
+			.waitFor();
 		await page.locator("#models").click();
 		assert.ok((await page.locator("[data-model-item]").first().textContent()).includes("claude-sonnet-4-6"));
 		await page.getByRole("button", { name: "Thinking", exact: true }).click();

@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, watch } from 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, context } from "esbuild";
+import { chatBridge } from "./chat-bridge.mjs";
 import { settingsBridge } from "./settings-bridge.mjs";
 import { storageBridge } from "./storage-bridge.mjs";
 
@@ -26,7 +27,7 @@ rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
 const buildOptions = {
-	plugins: [storageBridge(packageRoot), settingsBridge(packageRoot)],
+	plugins: [storageBridge(packageRoot), settingsBridge(packageRoot), chatBridge(packageRoot)],
 	absWorkingDir: packageRoot,
 	entryPoints,
 	bundle: true,

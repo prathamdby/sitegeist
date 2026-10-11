@@ -1,8 +1,36 @@
 import { setTranslations } from "@mariozechner/mini-lit";
-import { translations as webUiTranslations } from "@mariozechner/pi-web-ui";
+import { translations as webUiTranslations } from "@mariozechner/pi-web-ui/dist/utils/i18n.js";
 
 declare module "@mariozechner/mini-lit" {
 	interface i18nMessages {
+		"Select Model": string;
+		"Type a message...": string;
+		"Drop files here": string;
+		"Thinking...": string;
+		"Request aborted": string;
+		"Error:": string;
+		Input: string;
+		Output: string;
+		Calculating: string;
+		"Getting current time in": string;
+		"Running command...": string;
+		console: string;
+		"Copy output": string;
+		Off: string;
+		Minimal: string;
+		Low: string;
+		Medium: string;
+		High: string;
+		"(no output)": string;
+		"Waiting for command...": string;
+		"Writing command...": string;
+		"Preparing calculation...": string;
+		"Call was aborted; no result.": string;
+		"Waiting for expression...": string;
+		"Writing expression...": string;
+		"Getting current date and time": string;
+		Artifacts: string;
+		"Show artifacts": string;
 		// Web-UI base keys (needed for type safety)
 		"Delete this session?": string;
 		Today: string;

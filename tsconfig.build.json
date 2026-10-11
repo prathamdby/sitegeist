@@ -6,6 +6,7 @@
 		"module": "ESNext",
 		"moduleResolution": "Bundler",
 		"paths": {
+			"@mariozechner/pi-web-ui/dist/*": ["./node_modules/@mariozechner/pi-web-ui/dist/*"],
 			"@mariozechner/pi-ai": ["./src/pi/models.ts"],
 			"@mariozechner/pi-agent-core": ["./src/pi/agent.ts"]
 		},

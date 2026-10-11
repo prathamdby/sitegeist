@@ -1,19 +1,19 @@
+import { SandboxIframe } from "@mariozechner/pi-web-ui/dist/components/SandboxedIframe.js";
 import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
 import { icon } from "@mariozechner/mini-lit";
 import { Diff } from "@mariozechner/mini-lit/dist/Diff.js";
 import i18n from "@mariozechner/mini-lit/dist/i18n.js";
-import {
-	registerToolRenderer,
-	renderCollapsibleHeader,
-	renderHeader,
-	SandboxIframe,
-	type ToolRenderer,
-	type ToolRenderResult,
-} from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { createRef, ref } from "lit/directives/ref.js";
 import { Sparkles } from "lucide";
 import { type Static, Type } from "typebox";
+import {
+	registerToolRenderer,
+	renderCollapsibleHeader,
+	renderHeader,
+	type ToolRenderer,
+	type ToolRenderResult,
+} from "../chat/renderers/index.js";
 import { DomainPill } from "../components/DomainPill.js";
 import { SkillPill } from "../components/SkillPill.js";
 import type { AgentTool } from "../pi/agent.js";

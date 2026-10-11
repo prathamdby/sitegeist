@@ -1,4 +1,4 @@
-import { AgentInterface } from "@mariozechner/pi-web-ui";
+import { AgentInterface } from "../../src/chat/AgentInterface.js";
 import { AboutTab } from "../../src/dialogs/AboutTab.js";
 import { ApiKeysOAuthTab } from "../../src/dialogs/ApiKeysOAuthTab.js";
 import { CostsTab } from "../../src/dialogs/CostsTab.js";
