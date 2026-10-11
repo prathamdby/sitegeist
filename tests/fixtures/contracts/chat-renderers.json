@@ -1,0 +1,46 @@
+{
+	"pending": {
+		"bash": ["Waiting for command...", "Waiting for command...", "Running command... console > ls"],
+		"calculate": ["Waiting for expression...", "Writing expression...", "Calculating 1+1"],
+		"get_current_time": ["Getting time...", "Getting current date and time", "Getting current time in UTC"]
+	},
+	"complete": {
+		"en": {
+			"bash": "Running command... console > ls Result body",
+			"calculate": "1+1 = Result body",
+			"get_current_time": "Getting current time in UTC: Result body"
+		},
+		"de": {
+			"bash": "Führe Befehl aus... Konsole > ls Result body",
+			"calculate": "1+1 = Result body",
+			"get_current_time": "Hole aktuelle Zeit in UTC: Result body"
+		}
+	},
+	"germanBody": "Question Thinking... Before tool Tool Call Eingabe json { \"query\": \"fixture\" } Ausgabe text Result body After tool ↑120 ↓35 R10 W5 $0.0330",
+	"layout": {
+		"360-light": {
+			"x": 16,
+			"y": 156.75,
+			"width": 328,
+			"height": 286
+		},
+		"360-dark": {
+			"x": 16,
+			"y": 156.75,
+			"width": 328,
+			"height": 286
+		},
+		"900-light": {
+			"x": 16,
+			"y": 156.75,
+			"width": 868,
+			"height": 286
+		},
+		"900-dark": {
+			"x": 16,
+			"y": 156.75,
+			"width": 868,
+			"height": 286
+		}
+	}
+}

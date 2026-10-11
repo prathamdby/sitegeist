@@ -1,0 +1,678 @@
+{
+	"errors": {
+		"unknown.xyz": "Unsupported file type: application/octet-stream",
+		"image.png": "Unsupported file type: application/octet-stream",
+		"bad.pdf": "Failed to process PDF: InvalidPDFException: Invalid PDF structure.",
+		"bad.docx": "Failed to process DOCX: Error: Can't find end of central directory : is this a zip file ? If it is, see https://stuk.github.io/jszip/documentation/howto/read_zip.html",
+		"bad.pptx": "Failed to process PPTX: Error: Can't find end of central directory : is this a zip file ? If it is, see https://stuk.github.io/jszip/documentation/howto/read_zip.html"
+	},
+	"tools": {
+		"sample.txt": {
+			"content": [
+				{
+					"type": "text",
+					"text": "Hello <world> & everyone\nSecond line.\n"
+				}
+			],
+			"details": {
+				"extractedText": "Hello <world> & everyone\nSecond line.\n",
+				"format": "unknown",
+				"fileName": "sample.txt",
+				"size": 38
+			}
+		},
+		"sample.pdf": {
+			"content": [
+				{
+					"type": "text",
+					"text": "<pdf filename=\"sample.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>"
+				}
+			],
+			"details": {
+				"extractedText": "<pdf filename=\"sample.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>",
+				"format": "pdf",
+				"fileName": "sample.pdf",
+				"size": 857
+			}
+		},
+		"sample.docx": {
+			"content": [
+				{
+					"type": "text",
+					"text": "<docx filename=\"sample.docx\">\n<page number=\"1\">\nHello DOCX & more\nSecond paragraph\n</page>\n</docx>"
+				}
+			],
+			"details": {
+				"extractedText": "<docx filename=\"sample.docx\">\n<page number=\"1\">\nHello DOCX & more\nSecond paragraph\n</page>\n</docx>",
+				"format": "docx",
+				"fileName": "sample.docx",
+				"size": 1625
+			}
+		},
+		"sample.pptx": {
+			"content": [
+				{
+					"type": "text",
+					"text": "<pptx filename=\"sample.pptx\">\n<slide number=\"1\">\nSlide 1\n &amp; detail\nNext paragraph\n</slide>\n<slide number=\"2\">\nSlide 2\n &amp; detail\nNext paragraph\n</slide>\n<slide number=\"3\">\nSlide 10\n &amp; detail\nNext paragraph\n</slide>\n</pptx>"
+				}
+			],
+			"details": {
+				"extractedText": "<pptx filename=\"sample.pptx\">\n<slide number=\"1\">\nSlide 1\n &amp; detail\nNext paragraph\n</slide>\n<slide number=\"2\">\nSlide 2\n &amp; detail\nNext paragraph\n</slide>\n<slide number=\"3\">\nSlide 10\n &amp; detail\nNext paragraph\n</slide>\n</pptx>",
+				"format": "pptx",
+				"fileName": "sample.pptx",
+				"size": 1587
+			}
+		},
+		"sample.xlsx": {
+			"content": [
+				{
+					"type": "text",
+					"text": "<excel filename=\"sample.xlsx\">\n<sheet name=\"People\" index=\"1\">\nName,Count\nAlice,2\nBob,3\n</sheet>\n<sheet name=\"Second & sheet\" index=\"2\">\nOther,\"x,y\"\n<test>,TRUE\n</sheet>\n</excel>"
+				}
+			],
+			"details": {
+				"extractedText": "<excel filename=\"sample.xlsx\">\n<sheet name=\"People\" index=\"1\">\nName,Count\nAlice,2\nBob,3\n</sheet>\n<sheet name=\"Second & sheet\" index=\"2\">\nOther,\"x,y\"\n<test>,TRUE\n</sheet>\n</excel>",
+				"format": "xlsx",
+				"fileName": "sample.xlsx",
+				"size": 17091
+			}
+		},
+		"sample.xls": {
+			"content": [
+				{
+					"type": "text",
+					"text": "<excel filename=\"sample.xls\">\n<sheet name=\"People\" index=\"1\">\nName,Count\nAlice,2\nBob,3\n</sheet>\n<sheet name=\"Second & sheet\" index=\"2\">\nOther,\"x,y\"\n<test>,TRUE\n</sheet>\n</excel>"
+				}
+			],
+			"details": {
+				"extractedText": "<excel filename=\"sample.xls\">\n<sheet name=\"People\" index=\"1\">\nName,Count\nAlice,2\nBob,3\n</sheet>\n<sheet name=\"Second & sheet\" index=\"2\">\nOther,\"x,y\"\n<test>,TRUE\n</sheet>\n</excel>",
+				"format": "xlsx",
+				"fileName": "sample.xls",
+				"size": 4096
+			}
+		},
+		"breaks.docx": {
+			"content": [
+				{
+					"type": "text",
+					"text": "<docx filename=\"breaks.docx\">\n<page number=\"1\">\nBeforeLineTabAfter\nThird\nFourth\n</page>\n</docx>"
+				}
+			],
+			"details": {
+				"extractedText": "<docx filename=\"breaks.docx\">\n<page number=\"1\">\nBeforeLineTabAfter\nThird\nFourth\n</page>\n</docx>",
+				"format": "docx",
+				"fileName": "breaks.docx",
+				"size": 1585
+			}
+		}
+	},
+	"fetch": {
+		"ok undefined": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "hello"
+					}
+				],
+				"details": {
+					"extractedText": "hello",
+					"format": "unknown",
+					"fileName": "sample.txt",
+					"size": 5
+				}
+			},
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"ok https://proxy.test/?url=": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "hello"
+					}
+				],
+				"details": {
+					"extractedText": "hello",
+					"format": "unknown",
+					"fileName": "sample.txt",
+					"size": 5
+				}
+			},
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"http undefined": {
+			"error": "TELL USER: Unable to download the document (403 Forbidden). The site likely blocks automated downloads.\n\nINSTRUCT USER: Please download the file manually and attach it to your message using the attachment button (paperclip icon) in the message input area. I can then extract the text from the attached file.",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"http https://proxy.test/?url=": {
+			"error": "TELL USER: Unable to download the document (403 Forbidden). The site likely blocks automated downloads.\n\nINSTRUCT USER: Please download the file manually and attach it to your message using the attachment button (paperclip icon) in the message input area. I can then extract the text from the attached file.",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"ordinary undefined": {
+			"error": "Network fixture failure",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"ordinary https://proxy.test/?url=": {
+			"error": "Network fixture failure",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"type-error undefined": {
+			"error": "Network fixture failure",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"type-error https://proxy.test/?url=": {
+			"error": "Network fixture failure",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"cors-error undefined": {
+			"error": "TELL USER: Unable to fetch the document due to CORS restrictions (the server blocks requests from browser extensions).\n\nTo fix this, you need to configure a CORS proxy in Sitegeist settings:\n1. Open Sitegeist settings\n2. Find \"CORS Proxy URL\" setting\n3. Enter a proxy URL like: https://corsproxy.io/?\n4. Save and try again\n\nAlternatively, download the file manually and attach it to your message using the attachment button (paperclip icon).",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"cors-error https://proxy.test/?url=": {
+			"error": "TELL USER: Unable to fetch the document due to CORS restrictions.\n\nTried with proxy but it also failed: CORS blocked\n\nINSTRUCT USER: Please download the file manually and attach it to your message using the attachment button (paperclip icon) in the message input area. I can then extract the text from the attached file.",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				},
+				{
+					"url": "https://proxy.test/?url=https%3A%2F%2Fexample.test%2Fsample.txt",
+					"signal": true
+				}
+			]
+		},
+		"cors undefined": {
+			"error": "TELL USER: Unable to fetch the document due to CORS restrictions (the server blocks requests from browser extensions).\n\nTo fix this, you need to configure a CORS proxy in Sitegeist settings:\n1. Open Sitegeist settings\n2. Find \"CORS Proxy URL\" setting\n3. Enter a proxy URL like: https://corsproxy.io/?\n4. Save and try again\n\nAlternatively, download the file manually and attach it to your message using the attachment button (paperclip icon).",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"cors https://proxy.test/?url=": {
+			"error": "TELL USER: Unable to fetch the document due to CORS restrictions.\n\nTried with proxy but it also failed: Failed to fetch\n\nINSTRUCT USER: Please download the file manually and attach it to your message using the attachment button (paperclip icon) in the message input area. I can then extract the text from the attached file.",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				},
+				{
+					"url": "https://proxy.test/?url=https%3A%2F%2Fexample.test%2Fsample.txt",
+					"signal": true
+				}
+			]
+		},
+		"proxy-ok undefined": {
+			"error": "TELL USER: Unable to fetch the document due to CORS restrictions (the server blocks requests from browser extensions).\n\nTo fix this, you need to configure a CORS proxy in Sitegeist settings:\n1. Open Sitegeist settings\n2. Find \"CORS Proxy URL\" setting\n3. Enter a proxy URL like: https://corsproxy.io/?\n4. Save and try again\n\nAlternatively, download the file manually and attach it to your message using the attachment button (paperclip icon).",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"proxy-ok https://proxy.test/?url=": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "hello"
+					}
+				],
+				"details": {
+					"extractedText": "hello",
+					"format": "unknown",
+					"fileName": "sample.txt",
+					"size": 5
+				}
+			},
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				},
+				{
+					"url": "https://proxy.test/?url=https%3A%2F%2Fexample.test%2Fsample.txt",
+					"signal": true
+				}
+			]
+		},
+		"header-size undefined": {
+			"error": "Document is too large (51.0MB). Maximum supported size is 50MB.",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"header-size https://proxy.test/?url=": {
+			"error": "Document is too large (51.0MB). Maximum supported size is 50MB.",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"boundary-size undefined": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "hello"
+					}
+				],
+				"details": {
+					"extractedText": "hello",
+					"format": "unknown",
+					"fileName": "sample.txt",
+					"size": 5
+				}
+			},
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"boundary-size https://proxy.test/?url=": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "hello"
+					}
+				],
+				"details": {
+					"extractedText": "hello",
+					"format": "unknown",
+					"fileName": "sample.txt",
+					"size": 5
+				}
+			},
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"actual-size undefined": {
+			"error": "Document is too large (50.0MB). Maximum supported size is 50MB.",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"actual-size https://proxy.test/?url=": {
+			"error": "Document is too large (50.0MB). Maximum supported size is 50MB.",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"empty undefined": {
+			"error": "Document format not supported. Supported formats:\n- PDF (.pdf)\n- Word (.docx)\n- Excel (.xlsx, .xls)\n- PowerPoint (.pptx)",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"empty https://proxy.test/?url=": {
+			"error": "Document format not supported. Supported formats:\n- PDF (.pdf)\n- Word (.docx)\n- Excel (.xlsx, .xls)\n- PowerPoint (.pptx)",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"preabort undefined": {
+			"error": "Extract document aborted",
+			"calls": []
+		},
+		"preabort https://proxy.test/?url=": {
+			"error": "Extract document aborted",
+			"calls": []
+		},
+		"fetch-abort undefined": {
+			"error": "Fixture aborted",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		},
+		"fetch-abort https://proxy.test/?url=": {
+			"error": "Fixture aborted",
+			"calls": [
+				{
+					"url": "https://example.test/sample.txt",
+					"signal": true
+				}
+			]
+		}
+	},
+	"invalidUrls": {
+		"": {
+			"error": "URL is required",
+			"calls": []
+		},
+		"not-a-url": {
+			"error": "Invalid URL: not-a-url",
+			"calls": []
+		},
+		"https://example.test/unknown.xyz": {
+			"error": "Unsupported file type: application/octet-stream",
+			"calls": [
+				{
+					"url": "https://example.test/unknown.xyz",
+					"signal": true
+				}
+			]
+		},
+		"https://example.test/": {
+			"error": "Unsupported file type: application/octet-stream",
+			"calls": [
+				{
+					"url": "https://example.test/",
+					"signal": true
+				}
+			]
+		}
+	},
+	"mutableProxy": [
+		"https://example.test/sample.txt",
+		"https://first.test/?url=https%3A%2F%2Fexample.test%2Fsample.txt",
+		"https://example.test/sample.txt",
+		"https://second.test/?url=https%3A%2F%2Fexample.test%2Fsample.txt"
+	],
+	"renderers": {
+		"preparing": {
+			"label": "Preparing extraction...",
+			"spinners": 0,
+			"error": 0
+		},
+		"extracting": {
+			"label": "Extracting document...",
+			"spinners": 0,
+			"error": 0
+		},
+		"streaming": {
+			"label": "Extracting document...",
+			"spinners": 1,
+			"error": 0
+		},
+		"complete": {
+			"label": "Extracted text from sample.pdf (PDF, 1.0KB)",
+			"spinners": 0,
+			"error": 0
+		},
+		"error": {
+			"label": "Failed to extract document",
+			"spinners": 0,
+			"error": 2
+		}
+	},
+	"headerless": {
+		"https://example.test/download?file=sample.pdf": {
+			"error": "Unsupported file type: application/octet-stream",
+			"bodyReads": 1
+		},
+		"https://example.test/download?file=sample.pdf#document": {
+			"error": "Unsupported file type: application/octet-stream",
+			"bodyReads": 1
+		}
+	},
+	"headerlessSize": {
+		"error": "Document is too large (50.0MB). Maximum supported size is 50MB.",
+		"bodyReads": 1
+	},
+	"unrestrictedUrls": {
+		"http://127.0.0.1:8080/sample.txt": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Fixture URL text"
+					}
+				],
+				"details": {
+					"extractedText": "Fixture URL text",
+					"format": "unknown",
+					"fileName": "sample.txt",
+					"size": 16
+				}
+			},
+			"calls": ["http://127.0.0.1:8080/sample.txt"]
+		},
+		"http://localhost/sample.txt": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Fixture URL text"
+					}
+				],
+				"details": {
+					"extractedText": "Fixture URL text",
+					"format": "unknown",
+					"fileName": "sample.txt",
+					"size": 16
+				}
+			},
+			"calls": ["http://localhost/sample.txt"]
+		},
+		"http://10.0.0.1/sample.txt": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Fixture URL text"
+					}
+				],
+				"details": {
+					"extractedText": "Fixture URL text",
+					"format": "unknown",
+					"fileName": "sample.txt",
+					"size": 16
+				}
+			},
+			"calls": ["http://10.0.0.1/sample.txt"]
+		},
+		"http://192.168.1.1/sample.txt": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Fixture URL text"
+					}
+				],
+				"details": {
+					"extractedText": "Fixture URL text",
+					"format": "unknown",
+					"fileName": "sample.txt",
+					"size": 16
+				}
+			},
+			"calls": ["http://192.168.1.1/sample.txt"]
+		},
+		"http://169.254.169.254/sample.txt": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Fixture URL text"
+					}
+				],
+				"details": {
+					"extractedText": "Fixture URL text",
+					"format": "unknown",
+					"fileName": "sample.txt",
+					"size": 16
+				}
+			},
+			"calls": ["http://169.254.169.254/sample.txt"]
+		},
+		"data:text/plain,fixture.txt": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Fixture URL text"
+					}
+				],
+				"details": {
+					"extractedText": "Fixture URL text",
+					"format": "unknown",
+					"fileName": "plain,fixture.txt",
+					"size": 16
+				}
+			},
+			"calls": ["data:text/plain,fixture.txt"]
+		}
+	},
+	"fragmentUrls": {
+		"https://example.test/download#sample.pdf": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "<pdf filename=\"download#sample.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>"
+					}
+				],
+				"details": {
+					"extractedText": "<pdf filename=\"download#sample.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>",
+					"format": "pdf",
+					"fileName": "download#sample.pdf",
+					"size": 857
+				}
+			},
+			"bodyReads": 1
+		},
+		"https://example.test/download#sample.pdf?token=value": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "<pdf filename=\"download#sample.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>"
+					}
+				],
+				"details": {
+					"extractedText": "<pdf filename=\"download#sample.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>",
+					"format": "pdf",
+					"fileName": "download#sample.pdf",
+					"size": 857
+				}
+			},
+			"bodyReads": 1
+		},
+		"https://example.test/download?redirect=/nested/sample.pdf": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "<pdf filename=\"sample.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>"
+					}
+				],
+				"details": {
+					"extractedText": "<pdf filename=\"sample.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>",
+					"format": "pdf",
+					"fileName": "sample.pdf",
+					"size": 857
+				}
+			},
+			"bodyReads": 1
+		},
+		"https://example.test/download#docs/path/sample.pdf": {
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "<pdf filename=\"sample.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>"
+					}
+				],
+				"details": {
+					"extractedText": "<pdf filename=\"sample.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>",
+					"format": "pdf",
+					"fileName": "sample.pdf",
+					"size": 857
+				}
+			},
+			"bodyReads": 1
+		}
+	},
+	"queryUrl": {
+		"result": {
+			"content": [
+				{
+					"type": "text",
+					"text": "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 7 0 R >> >> /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 45 >>\nstream\nBT /F1 12 Tf 20 150 Td (First PDF page) Tj ET\nendstream\nendobj\n5 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>\nendobj\n6 0 obj\n<< /Length 46 >>\nstream\nBT /F1 12 Tf 20 150 Td (Second PDF page) Tj ET\nendstream\nendobj\n7 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\nxref\n0 8\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000121 00000 n \n0000000247 00000 n \n0000000342 00000 n \n0000000468 00000 n \n0000000564 00000 n \ntrailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n634\n%%EOF\n"
+				}
+			],
+			"details": {
+				"extractedText": "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 7 0 R >> >> /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 45 >>\nstream\nBT /F1 12 Tf 20 150 Td (First PDF page) Tj ET\nendstream\nendobj\n5 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>\nendobj\n6 0 obj\n<< /Length 46 >>\nstream\nBT /F1 12 Tf 20 150 Td (Second PDF page) Tj ET\nendstream\nendobj\n7 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\nxref\n0 8\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000121 00000 n \n0000000247 00000 n \n0000000342 00000 n \n0000000468 00000 n \n0000000564 00000 n \ntrailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n634\n%%EOF\n",
+				"format": "unknown",
+				"fileName": "sample.txt",
+				"size": 857
+			}
+		},
+		"bodyReads": 1
+	}
+}

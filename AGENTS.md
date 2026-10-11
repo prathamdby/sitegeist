@@ -15,9 +15,9 @@ If the user did not give you a concrete task, read README.md first.
 - Always ask before removing functionality or code that appears intentional
 
 ## Dependencies
-- `@mariozechner/mini-lit`, `@mariozechner/pi-ai`, `@mariozechner/pi-web-ui`, `@mariozechner/pi-agent-core` are linked via `file:` to sibling repos `../mini-lit` and `../pi-mono`
-- Changes to those packages require rebuilding them (the dev watcher handles this)
-- If you need to modify upstream code, edit it in `../pi-mono` or `../mini-lit` directly and rebuild
+- Dependencies install from the root lockfile with `npm ci`; no sibling repositories are required.
+- Pi SDK packages are pinned to `@earendil-works/pi-ai@1.1.0` and `@earendil-works/pi-agent-core@1.1.0`.
+- UI primitives stay on `@mariozechner/mini-lit@0.2.1`; Sitegeist owns its chat, settings, storage and sandbox implementations.
 
 ## Changelog
 Location: `CHANGELOG.md`

@@ -6,9 +6,6 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { build } from "esbuild";
-import { chatBridge } from "../scripts/chat-bridge.mjs";
-import { settingsBridge } from "../scripts/settings-bridge.mjs";
-import { storageBridge } from "../scripts/storage-bridge.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
@@ -74,13 +71,10 @@ test(
 				platform: "browser",
 				format: "esm",
 				outfile: join(extension, "fixture.js"),
-				plugins: [storageBridge(root), settingsBridge(root), chatBridge(root)],
 				define: { "process.env.NODE_ENV": '"test"', global: "globalThis" },
 				inject: [join(root, "scripts/process-shim.js")],
 				alias: {
 					process: join(root, "scripts/process-shim.js"),
-					"@mariozechner/pi-ai": join(root, "src/pi/models.ts"),
-					"@mariozechner/pi-agent-core": join(root, "src/pi/agent.ts"),
 					"@mariozechner/mini-lit": join(root, "node_modules/@mariozechner/mini-lit"),
 					lit: join(root, "node_modules/lit"),
 				},

@@ -1,9 +1,3 @@
-import { loadAttachment as baselineLoad } from "@mariozechner/pi-web-ui/dist/utils/attachment-utils.js";
-import "@mariozechner/pi-web-ui/dist/components/ConsoleBlock.js";
-import {
-	extractDocumentRenderer as baselineRenderer,
-	createExtractDocumentTool as baselineTool,
-} from "@mariozechner/pi-web-ui/dist/tools/extract-document.js";
 import { render } from "lit";
 import { GlobalWorkerOptions } from "pdfjs-dist";
 import { loadAttachment, loadPdfDocument } from "../../src/attachments/processing.js";
@@ -17,7 +11,7 @@ const pdfWorkerCounts = { created: 0, terminated: 0 };
 const fixture = {
 	workerSrc: GlobalWorkerOptions.workerSrc,
 	registered: getToolRenderer("extract_document") === extractDocumentRenderer,
-	async load(local: boolean, name: string, mode: "bytes" | "file" | "blob" | "url" = "bytes", mimeType = "") {
+	async load(name: string, mode: "bytes" | "file" | "blob" | "url" = "bytes", mimeType = "") {
 		const bytes = await (await fetch(`/files/${name}`)).arrayBuffer();
 		const source =
 			mode === "file"
@@ -27,20 +21,20 @@ const fixture = {
 					: mode === "url"
 						? `${location.origin}/files/${name}`
 						: bytes;
-		return (local ? loadAttachment : baselineLoad)(source, mode === "file" || mode === "url" ? undefined : name);
+		return loadAttachment(source, mode === "file" || mode === "url" ? undefined : name);
 	},
-	async raw(local: boolean, text: string, name?: string, mimeType?: string) {
-		return (local ? loadAttachment : baselineLoad)(
+	async raw(text: string, name?: string, mimeType?: string) {
+		return loadAttachment(
 			mimeType === undefined ? new TextEncoder().encode(text).buffer : new Blob([text], { type: mimeType }),
 			name,
 		);
 	},
-	async tool(local: boolean, name: string) {
-		return (local ? createExtractDocumentTool : baselineTool)().execute("fixture", {
+	async tool(name: string) {
+		return createExtractDocumentTool().execute("fixture", {
 			url: `${location.origin}/files/${name}`,
 		});
 	},
-	async simulate(local: boolean, scenario: string, url = "https://example.test/sample.txt", proxy?: string) {
+	async simulate(scenario: string, url = "https://example.test/sample.txt", proxy?: string) {
 		const originalFetch = window.fetch;
 		const calls: { url: string; signal: boolean }[] = [];
 		const controller = new AbortController();
@@ -90,7 +84,7 @@ const fixture = {
 				},
 			});
 		};
-		const tool = (local ? createExtractDocumentTool : baselineTool)();
+		const tool = createExtractDocumentTool();
 		tool.corsProxyUrl = proxy;
 		try {
 			return { result: await tool.execute("fixture", { url }, controller.signal), calls };
@@ -100,7 +94,7 @@ const fixture = {
 			window.fetch = originalFetch;
 		}
 	},
-	async mutableProxy(local: boolean) {
+	async mutableProxy() {
 		const originalFetch = window.fetch;
 		const calls: string[] = [];
 		window.fetch = async (url) => {
@@ -108,7 +102,7 @@ const fixture = {
 			if (String(url).startsWith("https://example.test")) throw new TypeError("Failed to fetch");
 			return new Response("hello");
 		};
-		const tool = (local ? createExtractDocumentTool : baselineTool)();
+		const tool = createExtractDocumentTool();
 		try {
 			for (const proxy of ["https://first.test/?url=", "https://second.test/?url="]) {
 				tool.corsProxyUrl = proxy;
@@ -154,14 +148,14 @@ const fixture = {
 	get pdfStartupResult() {
 		return pdfStartupResult;
 	},
-	async renamedDocument(local: boolean, sourceName: string, fileName: string) {
+	async renamedDocument(sourceName: string, fileName: string) {
 		const bytes = await (await fetch(`/files/${sourceName}`)).arrayBuffer();
-		const attachment = await (local ? loadAttachment : baselineLoad)(bytes, fileName);
+		const attachment = await loadAttachment(bytes, fileName);
 		return { mimeType: attachment.mimeType, extractedText: attachment.extractedText };
 	},
-	async emptyOrMislabeled(local: boolean, fileName: string, text = "", mimeType?: string) {
+	async emptyOrMislabeled(fileName: string, text = "", mimeType?: string) {
 		try {
-			const attachment = await (local ? loadAttachment : baselineLoad)(
+			const attachment = await loadAttachment(
 				mimeType === undefined ? new TextEncoder().encode(text).buffer : new Blob([text], { type: mimeType }),
 				fileName,
 			);
@@ -176,7 +170,7 @@ const fixture = {
 			return { error: error instanceof Error ? error.message : String(error) };
 		}
 	},
-	async headerlessDocument(local: boolean, url: string, oversized = false) {
+	async headerlessDocument(url: string, oversized = false) {
 		const bytes = oversized ? undefined : await (await fetch("/files/sample.pdf")).arrayBuffer();
 		const originalFetch = window.fetch;
 		let bodyReads = 0;
@@ -191,7 +185,7 @@ const fixture = {
 			}) as Response;
 		try {
 			return {
-				result: await (local ? createExtractDocumentTool : baselineTool)().execute("fixture", { url }),
+				result: await createExtractDocumentTool().execute("fixture", { url }),
 				bodyReads,
 			};
 		} catch (error) {
@@ -200,7 +194,7 @@ const fixture = {
 			window.fetch = originalFetch;
 		}
 	},
-	async unrestrictedUrl(local: boolean, url: string) {
+	async unrestrictedUrl(url: string) {
 		const originalFetch = window.fetch;
 		const calls: string[] = [];
 		window.fetch = async (input) => {
@@ -209,7 +203,7 @@ const fixture = {
 		};
 		try {
 			return {
-				result: await (local ? createExtractDocumentTool : baselineTool)().execute("fixture", { url }),
+				result: await createExtractDocumentTool().execute("fixture", { url }),
 				calls,
 			};
 		} catch (error) {
@@ -232,7 +226,7 @@ const fixture = {
 			}
 		};
 	},
-	async show(local: boolean, state: "preparing" | "extracting" | "streaming" | "complete" | "error") {
+	async show(state: "preparing" | "extracting" | "streaming" | "complete" | "error") {
 		const result =
 			state === "complete" || state === "error"
 				? {
@@ -256,12 +250,13 @@ const fixture = {
 							: {}),
 					}
 				: undefined;
-		const renderer = local ? extractDocumentRenderer : baselineRenderer;
+		const renderer = extractDocumentRenderer;
 		const rendered = renderer.render(
 			state === "preparing" ? undefined : { url: "https://example.test/sample.pdf" },
 			result,
 			state === "streaming",
 		);
+		render(null, document.querySelector("#render")!);
 		render(rendered.content, document.querySelector("#render")!);
 		await Promise.all(
 			Array.from(

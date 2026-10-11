@@ -1,0 +1,834 @@
+{
+	"commands": [
+		[
+			{
+				"type": "text",
+				"text": "Error: File missing.txt not found. No files have been created yet."
+			}
+		],
+		[
+			{
+				"type": "text",
+				"text": "Error: File missing.txt not found. No files have been created yet."
+			}
+		],
+		[
+			{
+				"type": "text",
+				"text": "Created file notes.txt"
+			}
+		],
+		[
+			{
+				"type": "text",
+				"text": "Error: File notes.txt already exists"
+			}
+		],
+		[
+			{
+				"type": "text",
+				"text": "Error: String not found in file. Here is the full content:\n\nbefore one one after"
+			}
+		],
+		[
+			{
+				"type": "text",
+				"text": "Updated file notes.txt"
+			}
+		],
+		[
+			{
+				"type": "text",
+				"text": "before one/before / one after/$ one after"
+			}
+		],
+		[
+			{
+				"type": "text",
+				"text": ""
+			}
+		],
+		[
+			{
+				"type": "text",
+				"text": "Error: File notes.txt is not an HTML file. Logs are only available for HTML files."
+			}
+		],
+		[
+			{
+				"type": "text",
+				"text": "Deleted file notes.txt"
+			}
+		]
+	],
+	"states": [
+		{
+			"artifacts": [],
+			"opened": 0,
+			"closed": 0,
+			"changed": 0
+		},
+		{
+			"artifacts": [],
+			"opened": 0,
+			"closed": 0,
+			"changed": 0
+		},
+		{
+			"artifacts": [
+				{
+					"filename": "notes.txt",
+					"content": "before one one after"
+				}
+			],
+			"opened": 0,
+			"closed": 0,
+			"changed": 1
+		},
+		{
+			"artifacts": [
+				{
+					"filename": "notes.txt",
+					"content": "before one one after"
+				}
+			],
+			"opened": 0,
+			"closed": 0,
+			"changed": 1
+		},
+		{
+			"artifacts": [
+				{
+					"filename": "notes.txt",
+					"content": "before one one after"
+				}
+			],
+			"opened": 0,
+			"closed": 0,
+			"changed": 1
+		},
+		{
+			"artifacts": [
+				{
+					"filename": "notes.txt",
+					"content": "before one/before / one after/$ one after"
+				}
+			],
+			"opened": 0,
+			"closed": 0,
+			"changed": 2
+		},
+		{
+			"artifacts": [
+				{
+					"filename": "notes.txt",
+					"content": "before one/before / one after/$ one after"
+				}
+			],
+			"opened": 0,
+			"closed": 0,
+			"changed": 2
+		},
+		{
+			"artifacts": [
+				{
+					"filename": "notes.txt",
+					"content": "new"
+				}
+			],
+			"opened": 0,
+			"closed": 0,
+			"changed": 3
+		},
+		{
+			"artifacts": [
+				{
+					"filename": "notes.txt",
+					"content": "new"
+				}
+			],
+			"opened": 0,
+			"closed": 0,
+			"changed": 3
+		},
+		{
+			"artifacts": [],
+			"opened": 0,
+			"closed": 0,
+			"changed": 4
+		}
+	],
+	"closed": {
+		"artifacts": [
+			{
+				"filename": "open.md",
+				"content": "# Note"
+			}
+		],
+		"opened": 1,
+		"closed": 1,
+		"changed": 5
+	},
+	"metrics": {
+		"notes.md": {
+			"header": {
+				"x": 1,
+				"y": 0,
+				"width": 599,
+				"height": 43
+			},
+			"tabs": [
+				{
+					"x": 1,
+					"y": 0,
+					"width": 81.609375,
+					"height": 42
+				}
+			],
+			"controls": [
+				{
+					"title": "Preview",
+					"bounds": {
+						"x": 399,
+						"y": 8,
+						"width": 32,
+						"height": 26
+					}
+				},
+				{
+					"title": "Code",
+					"bounds": {
+						"x": 431,
+						"y": 8,
+						"width": 32,
+						"height": 26
+					}
+				},
+				{
+					"title": "Copy Markdown",
+					"bounds": {
+						"x": 472,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Download Markdown",
+					"bounds": {
+						"x": 516,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Close artifacts",
+					"bounds": {
+						"x": 556,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				}
+			],
+			"text": "notes.md",
+			"content": [
+				{
+					"bounds": {
+						"x": 17,
+						"y": 79,
+						"width": 567,
+						"height": 32
+					},
+					"color": "oklch(0.145 0 0)",
+					"fontSize": "24px"
+				}
+			]
+		},
+		"shape.svg": {
+			"header": {
+				"x": 1,
+				"y": 0,
+				"width": 599,
+				"height": 43
+			},
+			"tabs": [
+				{
+					"x": 1,
+					"y": 0,
+					"width": 88.8125,
+					"height": 42
+				}
+			],
+			"controls": [
+				{
+					"title": "Preview",
+					"bounds": {
+						"x": 399,
+						"y": 8,
+						"width": 32,
+						"height": 26
+					}
+				},
+				{
+					"title": "Code",
+					"bounds": {
+						"x": 431,
+						"y": 8,
+						"width": 32,
+						"height": 26
+					}
+				},
+				{
+					"title": "Copy SVG",
+					"bounds": {
+						"x": 472,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Download SVG",
+					"bounds": {
+						"x": 516,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Close artifacts",
+					"bounds": {
+						"x": 556,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				}
+			],
+			"text": "shape.svg",
+			"content": [
+				{
+					"bounds": {
+						"x": 21,
+						"y": 123,
+						"width": 200,
+						"height": 80
+					},
+					"color": "oklch(0.145 0 0)",
+					"fontSize": "16px"
+				}
+			]
+		},
+		"script.js": {
+			"header": {
+				"x": 1,
+				"y": 0,
+				"width": 599,
+				"height": 43
+			},
+			"tabs": [
+				{
+					"x": 1,
+					"y": 0,
+					"width": 88.8125,
+					"height": 42
+				}
+			],
+			"controls": [
+				{
+					"title": "Copy",
+					"bounds": {
+						"x": 476,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Download",
+					"bounds": {
+						"x": 516,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Close artifacts",
+					"bounds": {
+						"x": 556,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				}
+			],
+			"text": "script.js",
+			"content": [
+				{
+					"bounds": {
+						"x": 17,
+						"y": 60,
+						"width": 144.046875,
+						"height": 30
+					},
+					"color": "oklch(0.145 0 0)",
+					"fontSize": "12px"
+				}
+			]
+		},
+		"notes.txt": {
+			"header": {
+				"x": 1,
+				"y": 0,
+				"width": 599,
+				"height": 43
+			},
+			"tabs": [
+				{
+					"x": 1,
+					"y": 0,
+					"width": 88.8125,
+					"height": 42
+				}
+			],
+			"controls": [
+				{
+					"title": "Copy",
+					"bounds": {
+						"x": 476,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Download",
+					"bounds": {
+						"x": 516,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Close artifacts",
+					"bounds": {
+						"x": 556,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				}
+			],
+			"text": "notes.txt",
+			"content": [
+				{
+					"bounds": {
+						"x": 1,
+						"y": 43,
+						"width": 599,
+						"height": 64
+					},
+					"color": "oklch(0.145 0 0)",
+					"fontSize": "12px"
+				}
+			]
+		},
+		"sample.png": {
+			"header": {
+				"x": 1,
+				"y": 0,
+				"width": 599,
+				"height": 43
+			},
+			"tabs": [
+				{
+					"x": 1,
+					"y": 0,
+					"width": 96.015625,
+					"height": 42
+				}
+			],
+			"controls": [
+				{
+					"title": "Download",
+					"bounds": {
+						"x": 516,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Close artifacts",
+					"bounds": {
+						"x": 556,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				}
+			],
+			"text": "sample.png",
+			"content": [
+				{
+					"bounds": {
+						"x": 300,
+						"y": 421,
+						"width": 1,
+						"height": 1
+					},
+					"color": "oklch(0.145 0 0)",
+					"fontSize": "16px"
+				}
+			]
+		},
+		"opaque.bin": {
+			"header": {
+				"x": 1,
+				"y": 0,
+				"width": 599,
+				"height": 43
+			},
+			"tabs": [
+				{
+					"x": 1,
+					"y": 0,
+					"width": 96.015625,
+					"height": 42
+				}
+			],
+			"controls": [
+				{
+					"title": "Download",
+					"bounds": {
+						"x": 516,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Close artifacts",
+					"bounds": {
+						"x": 556,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				}
+			],
+			"text": "opaque.bin",
+			"content": [
+				{
+					"bounds": {
+						"x": 76.5,
+						"y": 451.5,
+						"width": 448,
+						"height": 40
+					},
+					"color": "oklch(0.556 0 0)",
+					"fontSize": "14px"
+				}
+			]
+		},
+		"report.pdf": {
+			"header": {
+				"x": 1,
+				"y": 0,
+				"width": 599,
+				"height": 43
+			},
+			"tabs": [
+				{
+					"x": 1,
+					"y": 0,
+					"width": 96.015625,
+					"height": 42
+				}
+			],
+			"controls": [
+				{
+					"title": "Download",
+					"bounds": {
+						"x": 516,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Close artifacts",
+					"bounds": {
+						"x": 556,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				}
+			],
+			"text": "report.pdf",
+			"content": [
+				{
+					"bounds": {
+						"x": 17,
+						"y": 59,
+						"width": 567,
+						"height": 341
+					},
+					"color": "oklch(0.145 0 0)",
+					"fontSize": "16px",
+					"width": 450,
+					"height": 270
+				},
+				{
+					"bounds": {
+						"x": 17,
+						"y": 433,
+						"width": 567,
+						"height": 341
+					},
+					"color": "oklch(0.145 0 0)",
+					"fontSize": "16px",
+					"width": 450,
+					"height": 270
+				}
+			]
+		},
+		"memo.docx": {
+			"header": {
+				"x": 1,
+				"y": 0,
+				"width": 599,
+				"height": 43
+			},
+			"tabs": [
+				{
+					"x": 1,
+					"y": 0,
+					"width": 88.8125,
+					"height": 42
+				}
+			],
+			"controls": [
+				{
+					"title": "Download",
+					"bounds": {
+						"x": 516,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Close artifacts",
+					"bounds": {
+						"x": 556,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				}
+			],
+			"text": "memo.docx",
+			"content": [
+				{
+					"bounds": {
+						"x": 1,
+						"y": 43,
+						"width": 599,
+						"height": 1056
+					},
+					"color": "rgb(0, 0, 0)",
+					"fontSize": "16px"
+				}
+			]
+		},
+		"data.xlsx": {
+			"header": {
+				"x": 1,
+				"y": 0,
+				"width": 599,
+				"height": 43
+			},
+			"tabs": [
+				{
+					"x": 1,
+					"y": 0,
+					"width": 88.8125,
+					"height": 42
+				}
+			],
+			"controls": [
+				{
+					"title": "Download",
+					"bounds": {
+						"x": 516,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				},
+				{
+					"title": "Close artifacts",
+					"bounds": {
+						"x": 556,
+						"y": 5,
+						"width": 36,
+						"height": 32
+					}
+				}
+			],
+			"text": "data.xlsx",
+			"content": [
+				{
+					"bounds": {
+						"x": 1,
+						"y": 98,
+						"width": 278.890625,
+						"height": 223
+					},
+					"color": "oklch(0.145 0 0)",
+					"fontSize": "16px"
+				}
+			]
+		}
+	},
+	"german": {
+		"titles": [
+			["Vorschau", "Code", "Markdown kopieren", "Markdown herunterladen", "Artefakte schließen"],
+			["Vorschau", "Code", "SVG kopieren", "SVG herunterladen", "Artefakte schließen"],
+			["Vorschau", "Code", "HTML neu laden", "HTML kopieren", "HTML herunterladen", "Artefakte schließen"],
+			["Kopieren", "Herunterladen", "Artefakte schließen"]
+		],
+		"renderers": [
+			"Bereite Artefakt vor...",
+			"Bereite Artefakt vor...",
+			"Erstelle Artefakt",
+			"Aktualisiere Artefakt",
+			"Hole Artefakt",
+			"Erstelle Artefakt text.txt text Hallo"
+		]
+	},
+	"completion": [
+		{
+			"command": "create",
+			"text": "Created file async.html\n[log] delayed"
+		},
+		{
+			"command": "logs",
+			"text": "[log] delayed"
+		},
+		{
+			"command": "update",
+			"text": "Updated file async.html\n[log] delayed"
+		},
+		{
+			"command": "rewrite",
+			"text": "\n[log] delayed"
+		}
+	],
+	"diagnostics": [
+		{
+			"filename": "empty.html",
+			"create": "Created file empty.html\nNo logs for empty.html",
+			"logs": "No logs for empty.html"
+		},
+		{
+			"filename": "syntax.html",
+			"create": "Created file syntax.html\nNo logs for syntax.html",
+			"logs": "No logs for syntax.html"
+		},
+		{
+			"filename": "uncaught.html",
+			"create": "Created file uncaught.html\nNo logs for uncaught.html",
+			"logs": "No logs for uncaught.html"
+		},
+		{
+			"filename": "rejection.html",
+			"create": "Created file rejection.html\nNo logs for rejection.html",
+			"logs": "No logs for rejection.html"
+		}
+	],
+	"html": {
+		"header": {
+			"x": 1,
+			"y": 0,
+			"width": 599,
+			"height": 43
+		},
+		"controls": [
+			{
+				"title": "Preview",
+				"bounds": {
+					"x": 355,
+					"y": 8,
+					"width": 32,
+					"height": 26
+				}
+			},
+			{
+				"title": "Code",
+				"bounds": {
+					"x": 387,
+					"y": 8,
+					"width": 32,
+					"height": 26
+				}
+			},
+			{
+				"title": "Reload HTML",
+				"bounds": {
+					"x": 428,
+					"y": 5,
+					"width": 36,
+					"height": 32
+				}
+			},
+			{
+				"title": "Copy HTML",
+				"bounds": {
+					"x": 472,
+					"y": 5,
+					"width": 36,
+					"height": 32
+				}
+			},
+			{
+				"title": "Download HTML",
+				"bounds": {
+					"x": 516,
+					"y": 5,
+					"width": 36,
+					"height": 32
+				}
+			},
+			{
+				"title": "Close artifacts",
+				"bounds": {
+					"x": 556,
+					"y": 5,
+					"width": 36,
+					"height": 32
+				}
+			}
+		],
+		"iframe": {
+			"x": 1,
+			"y": 43,
+			"width": 599,
+			"height": 720
+		},
+		"console": {
+			"x": 9,
+			"y": 772,
+			"width": 583,
+			"height": 20
+		},
+		"consoleText": "console (1 error)"
+	}
+}

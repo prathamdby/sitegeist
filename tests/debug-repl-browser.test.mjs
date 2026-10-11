@@ -8,9 +8,6 @@ import { after, before, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "@playwright/test";
 import { build } from "esbuild";
-import { chatBridge } from "../scripts/chat-bridge.mjs";
-import { settingsBridge } from "../scripts/settings-bridge.mjs";
-import { storageBridge } from "../scripts/storage-bridge.mjs";
 import { getModel } from "../src/pi/models.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -104,16 +101,11 @@ before(async () => {
 					);
 				},
 			},
-			storageBridge(root),
-			settingsBridge(root),
-			chatBridge(root),
 		],
 		define: { "process.env.NODE_ENV": '"test"', global: "globalThis" },
 		inject: [join(root, "scripts/process-shim.js")],
 		alias: {
 			process: join(root, "scripts/process-shim.js"),
-			"@mariozechner/pi-ai": join(root, "src/pi/models.ts"),
-			"@mariozechner/pi-agent-core": join(root, "src/pi/agent.ts"),
 			"@mariozechner/mini-lit": join(root, "node_modules/@mariozechner/mini-lit"),
 			lit: join(root, "node_modules/lit"),
 		},
@@ -142,8 +134,12 @@ after(async () => {
 	if (directory) rmSync(directory, { recursive: true, force: true });
 });
 
-async function debugPage() {
+async function debugPage(language) {
 	const page = await context.newPage();
+	if (language)
+		await page.addInitScript((code) => {
+			if (window === window.top) localStorage.setItem("language", code);
+		}, language);
 	await page.goto(`${origin}/debug.html`);
 	await page.locator("repl-panel textarea").waitFor();
 	return page;
@@ -210,6 +206,24 @@ test(
 		await run.click();
 		await page.waitForFunction(() => document.querySelector("repl-panel pre")?.textContent === "=> 7");
 		await page.close();
+		const german = await debugPage("de");
+		try {
+			const germanPanel = german.locator("repl-panel");
+			await germanPanel.locator("textarea").fill("await createOrUpdateArtifact('de.md', '# Deutsch'); return 42;");
+			await germanPanel.getByRole("button", { name: "Run", exact: true }).click();
+			await german.waitForFunction(() => document.querySelector("repl-panel pre")?.textContent === "=> 42");
+			assert.equal(await germanPanel.getByRole("heading", { name: "Deutsch", exact: true }).count(), 1);
+			assert.deepEqual(
+				await germanPanel
+					.locator("artifacts-panel > div > div button[title]")
+					.evaluateAll((buttons) => buttons.map((button) => button.title)),
+				["Vorschau", "Code", "Markdown kopieren", "Markdown herunterladen", "Artefakte schließen"],
+			);
+			await screenshot(german, "debug-repl-german-artifact.png");
+		} finally {
+			await german.evaluate(() => localStorage.setItem("language", "en"));
+			await german.close();
+		}
 	},
 );
 

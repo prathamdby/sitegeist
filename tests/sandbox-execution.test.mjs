@@ -6,11 +6,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { build } from "esbuild";
-import { chatBridge } from "../scripts/chat-bridge.mjs";
-import { settingsBridge } from "../scripts/settings-bridge.mjs";
-import { storageBridge } from "../scripts/storage-bridge.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const recorded = JSON.parse(readFileSync(join(root, "tests/fixtures/contracts/sandbox-execution.json"), "utf8"));
 
 test(
 	"production sandbox execution, async helpers, files and cleanup under the unchanged extension CSP",
@@ -48,13 +46,10 @@ test(
 				platform: "browser",
 				format: "esm",
 				outfile: join(extension, "fixture.js"),
-				plugins: [storageBridge(root), settingsBridge(root), chatBridge(root)],
 				define: { "process.env.NODE_ENV": '"test"', global: "globalThis" },
 				inject: [join(root, "scripts/process-shim.js")],
 				alias: {
 					process: join(root, "scripts/process-shim.js"),
-					"@mariozechner/pi-ai": join(root, "src/pi/models.ts"),
-					"@mariozechner/pi-agent-core": join(root, "src/pi/agent.ts"),
 					"@mariozechner/mini-lit": join(root, "node_modules/@mariozechner/mini-lit"),
 					lit: join(root, "node_modules/lit"),
 				},
@@ -68,14 +63,10 @@ test(
 			const page = await context.newPage();
 			await page.goto(`chrome-extension://${new URL(background.url()).hostname}/fixture.html`);
 			await page.waitForFunction(() => Boolean(window.sandboxExecutionFixture));
-			const execute = (code, baseline = false) =>
-				page.evaluate(({ code, baseline }) => window.sandboxExecutionFixture.execute(code, baseline), {
-					code,
-					baseline,
-				});
+			const execute = (code) => page.evaluate((code) => window.sandboxExecutionFixture.execute(code), code);
 			const script =
 				'console.log("log", {value: 7}); console.warn("warn"); console.info("info"); console.error("error"); return await asyncNumber();';
-			const baseline = await execute(script, true);
+			const baseline = { console: recorded.console, returnValue: recorded.returnValue };
 			const result = await execute(script);
 			assert.equal(result.success, true);
 			assert.equal(result.returnValue, 14);
@@ -84,12 +75,12 @@ test(
 			const callbackScript =
 				'onCompleted(async success => { console.log(success ? await asyncNumber() : "failed"); }); return 21;';
 			const callbacks = await execute(callbackScript);
-			const baselineCallbacks = await execute(callbackScript, true);
+			const baselineCallbacks = recorded.callbacks;
 			assert.deepEqual(callbacks, baselineCallbacks);
-			for (const callback of [
+			for (const [index, callback] of [
 				'() => { throw new Error("callback"); }',
 				'async () => { throw new Error("async callback"); }',
-			]) {
+			].entries()) {
 				const callbackFailure = `onCompleted(${callback}); return 9;`;
 				const normalize = (result) => ({
 					...result,
@@ -98,15 +89,18 @@ test(
 						args: log.args?.map((arg) => (arg instanceof Error ? { name: arg.name, message: arg.message } : arg)),
 					})),
 				});
-				assert.deepEqual(
-					normalize(await execute(callbackFailure)),
-					normalize(await execute(callbackFailure, true)),
-				);
+				assert.deepEqual(normalize(await execute(callbackFailure)), recorded.callbackErrors[index]);
 			}
 			const fileScript =
 				'await returnDownloadableFile("bytes.bin", new Uint8Array([0,1,254,255]), "application/octet-stream"); await returnDownloadableFile("text.txt", "héllo", "text/plain"); return readTextAttachment("restored") + ":" + Array.from(readBinaryAttachment("restored")).join(",");';
 			const files = await execute(fileScript);
-			const baselineFiles = await execute(fileScript, true);
+			const baselineFiles = {
+				...recorded.files,
+				files: recorded.files.files.map((file) => ({
+					...file,
+					content: typeof file.content === "string" ? file.content : Uint8Array.from(Object.values(file.content)),
+				})),
+			};
 			assert.deepEqual(files, baselineFiles);
 			assert.equal(files.success, true);
 			assert.equal(files.returnValue, "restored text:0,1,254,255");
@@ -144,10 +138,10 @@ test(
 			assert.match(syntax.error.message, /syntax|Unexpected/i);
 			assert.equal((await execute('return "</script>";')).returnValue, "</script>");
 			const explicit = "await complete(undefined, 9); return 2;";
-			assert.deepEqual(await execute(explicit), await execute(explicit, true));
+			assert.deepEqual(await execute(explicit), recorded.explicit);
 			const explicitErrorScript = 'await complete(new Error("explicit")); return 2;';
 			const explicitError = await execute(explicitErrorScript);
-			const baselineExplicitError = await execute(explicitErrorScript, true);
+			const baselineExplicitError = recorded.explicitError;
 			assert.equal(explicitError.success, baselineExplicitError.success);
 			assert.equal(explicitError.error.name, baselineExplicitError.error.name);
 			assert.equal(explicitError.error.message, baselineExplicitError.error.message);

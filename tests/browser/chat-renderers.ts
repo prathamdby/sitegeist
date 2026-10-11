@@ -1,5 +1,3 @@
-import { MessageList as BaselineList } from "@mariozechner/pi-web-ui/dist/components/MessageList.js";
-import { ToolMessage as BaselineTool } from "@mariozechner/pi-web-ui/dist/components/Messages.js";
 import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
 import "@mariozechner/mini-lit/dist/CodeBlock.js";
 import {
@@ -8,24 +6,12 @@ import {
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import { getTranslations, setLanguage } from "@mariozechner/mini-lit";
-import {
-	AgentInterface as BaselineController,
-	ExpandableSection as BaselineExpandable,
-	ThinkingBlock as BaselineThinking,
-	BashRenderer,
-	renderCollapsibleHeader as baselineHeader,
-	setShowJsonMode as baselineJson,
-	CalculateRenderer,
-	GetCurrentTimeRenderer,
-	registerToolRenderer,
-	setAppStorage as setBaselineStorage,
-} from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
 import { createRef, ref } from "lit/directives/ref.js";
 import { Code } from "lucide";
 import { Type } from "typebox";
-import { Agent as NativeBaselineAgent } from "../../../pi-mono/packages/agent/dist/index.js";
-import type { AgentInterface } from "../../src/chat/AgentInterface.js";
+import "../../src/utils/i18n-extension.js";
+import { AgentInterface } from "../../src/chat/AgentInterface.js";
 import {
 	ExpandableSection,
 	BashRenderer as LocalBash,
@@ -42,13 +28,10 @@ import {
 import { registerNavigationRenderer } from "../../src/messages/NavigationMessage.js";
 import { registerUserMessageRenderer } from "../../src/messages/UserMessageRenderer.js";
 import { registerWelcomeRenderer } from "../../src/messages/WelcomeMessage.js";
-import type { Agent } from "../../src/pi/agent.js";
+import { Agent } from "../../src/pi/agent.js";
 import { getModel } from "../../src/pi/models.js";
 import { SitegeistAppStorage, setAppStorage } from "../../src/storage/app-storage.js";
 
-registerToolRenderer("bash", new BashRenderer());
-registerToolRenderer("calculate", new CalculateRenderer());
-registerToolRenderer("get_current_time", new GetCurrentTimeRenderer());
 registerLocalTool("bash", new LocalBash());
 registerLocalTool("calculate", new LocalCalculate());
 registerLocalTool("get_current_time", new LocalTime());
@@ -100,7 +83,7 @@ globalThis.chrome = {
 		},
 	},
 };
-async function show(list: BaselineList | MessageList | BaselineTool | ToolMessage, options: Record<string, unknown>) {
+async function show(list: MessageList | ToolMessage, options: Record<string, unknown>) {
 	Object.assign(list, options);
 	document.body.replaceChildren(list);
 	await list.updateComplete;
@@ -108,25 +91,6 @@ async function show(list: BaselineList | MessageList | BaselineTool | ToolMessag
 	return list.outerHTML;
 }
 window.fixture = {
-	async baseline(options = {}) {
-		const list = new BaselineList();
-		Object.assign(list, {
-			messages: [{ role: "user", content: "Question", timestamp: 0 }, assistant, result],
-			...options,
-		});
-		document.body.replaceChildren(list);
-		await list.updateComplete;
-		await new Promise((resolve) => setTimeout(resolve, 100));
-		return list.outerHTML;
-	},
-	async tool(options = {}) {
-		const tool = new BaselineTool();
-		Object.assign(tool, { toolCall: assistant.content[2], result, ...options });
-		document.body.replaceChildren(tool);
-		await tool.updateComplete;
-		await new Promise((resolve) => setTimeout(resolve, 100));
-		return tool.outerHTML;
-	},
 	async local(options = {}) {
 		return show(new MessageList(), {
 			messages: [{ role: "user", content: "Question", timestamp: 0 }, assistant, result],
@@ -139,33 +103,33 @@ window.fixture = {
 	async localTool(options = {}) {
 		return show(new ToolMessage(), { toolCall: assistant.content[2], result, ...options });
 	},
-	json(local: boolean, enabled: boolean) {
-		(local ? setShowJsonMode : baselineJson)(enabled);
+	json(enabled: boolean) {
+		setShowJsonMode(enabled);
 	},
 	language(language: string) {
 		setLanguage(language);
 		return getTranslations();
 	},
-	async thinking(local: boolean, streaming: boolean) {
-		const element = local ? new ThinkingBlock() : new BaselineThinking();
+	async thinking(streaming: boolean) {
+		const element = new ThinkingBlock();
 		element.content = "Reasoning **detail**";
 		element.isStreaming = streaming;
 		document.body.replaceChildren(element);
 		await element.updateComplete;
 	},
-	header(local: boolean) {
+	header() {
 		document.body.replaceChildren();
 		const container = document.createElement("div");
 		document.body.append(container);
 		const content = createRef<HTMLElement>();
 		const chevron = createRef<HTMLElement>();
 		render(
-			html`<div>${(local ? renderCollapsibleHeader : baselineHeader)("complete", Code, "Details", content, chevron, false)}<div ${ref(content)} class="overflow-hidden transition-all duration-200 ease-in-out max-h-0">Hidden details</div></div>`,
+			html`<div>${renderCollapsibleHeader("complete", Code, "Details", content, chevron, false)}<div ${ref(content)} class="overflow-hidden transition-all duration-200 ease-in-out max-h-0">Hidden details</div></div>`,
 			container,
 		);
 	},
-	async expandable(local: boolean) {
-		const element = local ? new ExpandableSection() : new BaselineExpandable();
+	async expandable() {
+		const element = new ExpandableSection();
 		element.summary = "Expand";
 		element.append(document.createTextNode("Expanded content"));
 		document.body.replaceChildren(element);
@@ -207,10 +171,10 @@ window.fixture = {
 		});
 		return agent;
 	},
-	async baselineHold() {
+	async holdTools() {
 		let turn = 0;
 		const model = getModel("anthropic", "claude-sonnet-4-5");
-		const agent = new NativeBaselineAgent({
+		const agent = new Agent({
 			initialState: {
 				model,
 				tools: [
@@ -245,8 +209,7 @@ window.fixture = {
 				return stream;
 			},
 		});
-		setBaselineStorage(storage);
-		const controller = new BaselineController();
+		const controller = new AgentInterface();
 		controller.session = agent;
 		document.body.replaceChildren(controller);
 		await controller.updateComplete;

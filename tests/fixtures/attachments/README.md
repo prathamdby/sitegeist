@@ -4,7 +4,7 @@ These are synthetic documents generated for the clean-room attachment migration.
 
 `expected.json` records black-box outputs from the linked baseline's public `loadAttachment` runtime. No deleted web-ui implementation was read or copied. Preserved quirks include DOCX table omission and ignored page breaks, PPTX entity text remaining escaped, XLS MIME inference using the XLSX MIME, and raw text/code without markup.
 
-The tests also compare the baseline runtime directly, so parser outputs, MIME/source rules, errors and extract-document renderer behavior are independently exercised rather than only asserted against a local implementation.
+The tests execute the local implementation against these recorded expectations. Additional fixed public contracts in `../contracts/attachment-processing.json` preserve MIME/source rules, errors, fetch/proxy behavior and extract-document renderer states without requiring the historical runtime.
 
 `special-names.xlsx` contains a sheet named `Quote" <angle>&`; `edge-cases.json` records separately probed special-name, zero-byte and headerless-download outcomes. The XML-like filename/sheet annotations and document bodies remain raw, untrusted user-role prompt text, not parsed or trusted XML. Escaping only the names would alter the baseline rather than make the document body trusted. Host/scheme contract tests stub every fetch, including link-local addresses; they make no metadata-service network requests.
 

@@ -1,0 +1,18 @@
+{
+	"$schema": "https://api.capy.ai/schemas/setup.v1.json",
+	"format_version": 1,
+	"scripts": {
+		"initialize": "set -euo pipefail\nsource /usr/local/share/nvm/nvm.sh\nnvm install 22.23.3\nmkdir -p \"$HOME/.local/bin\"\nfor binary in node npm npx; do\n  ln -sfn \"$(dirname \"$(nvm which 22.23.3)\")/$binary\" \"$HOME/.local/bin/$binary\"\ndone\nexport PATH=\"$HOME/.local/bin:$PATH\"\nnpm ci --no-audit --no-fund\n{\n  node --version\n  npm --version\n  for file in package.json package-lock.json npm-shrinkwrap.json .npmrc .nvmrc .node-version; do\n    if [ -f \"$file\" ]; then sha256sum \"$file\"; fi\n  done\n} | sha256sum > \"$(git rev-parse --git-path capy-install-inputs.sha256)\"\n",
+		"refresh": "set -euo pipefail\nexport PATH=\"$HOME/.local/bin:$PATH\"\nif [ \"$(node --version)\" != v22.23.3 ]; then\n  source /usr/local/share/nvm/nvm.sh\n  nvm install 22.23.3\n  mkdir -p \"$HOME/.local/bin\"\n  for binary in node npm npx; do\n    ln -sfn \"$(dirname \"$(nvm which 22.23.3)\")/$binary\" \"$HOME/.local/bin/$binary\"\n  done\nfi\nstamp=\"$(git rev-parse --git-path capy-install-inputs.sha256)\"\ninputs=\"$({\n  node --version\n  npm --version\n  for file in package.json package-lock.json npm-shrinkwrap.json .npmrc .nvmrc .node-version; do\n    if [ -f \"$file\" ]; then sha256sum \"$file\"; fi\n  done\n} | sha256sum)\"\nif [ ! -d node_modules ] || [ ! -f \"$stamp\" ] || [ \"$(cat \"$stamp\")\" != \"$inputs\" ]; then\n  npm ci --no-audit --no-fund\n  printf '%s\\n' \"$inputs\" > \"$stamp\"\nfi\n"
+	},
+	"timeouts": {
+		"initialize": 900,
+		"refresh": 300
+	},
+	"startup": [],
+	"commands": [
+		{ "name": "Check", "command": "./check.sh", "timeout": 120 },
+		{ "name": "Typecheck", "command": "npm run typecheck", "timeout": 120 },
+		{ "name": "Development watchers", "command": "./dev.sh", "port": 8765, "timeout": 60 }
+	]
+}

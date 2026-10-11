@@ -9,6 +9,7 @@ import { build } from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const fixtures = join(root, "tests/fixtures/attachments");
+const recorded = JSON.parse(readFileSync(join(root, "tests/fixtures/contracts/attachment-processing.json"), "utf8"));
 const expected = JSON.parse(readFileSync(join(fixtures, "expected.json"), "utf8"));
 let browser;
 let server;
@@ -69,15 +70,14 @@ async function page() {
 test("preserved parser fixtures match measured baseline text and original bytes", async () => {
 	const p = await page();
 	for (const [name, snapshot] of Object.entries(expected)) {
-		for (const local of [false, true]) {
-			const attachment = await p.evaluate(
-				({ local, name }) => window.attachmentProcessingFixture.load(local, name),
-				{ local, name },
-			);
+		{
+			const attachment = await p.evaluate(({ name }) => window.attachmentProcessingFixture.load(name), {
+				name,
+			});
 			assert.deepEqual(
 				Object.fromEntries(Object.keys(snapshot).map((key) => [key, attachment[key]])),
 				snapshot,
-				`${local ? "local" : "baseline"} ${name}`,
+				`local ${name}`,
 			);
 			assert.equal(attachment.content, readFileSync(join(fixtures, name)).toString("base64"));
 			assert.equal(typeof attachment.id, "string");
@@ -98,11 +98,11 @@ test("preserved parser fixtures match measured baseline text and original bytes"
 
 test("File, Blob, URL, text/code and image MIME contracts survive", async () => {
 	const p = await page();
-	for (const local of [false, true]) {
+	{
 		for (const mode of ["file", "blob", "url"]) {
 			const attachment = await p.evaluate(
-				({ local, mode }) => window.attachmentProcessingFixture.load(local, "sample.txt", mode, "text/plain"),
-				{ local, mode },
+				({ mode }) => window.attachmentProcessingFixture.load("sample.txt", mode, "text/plain"),
+				{ mode },
 			);
 			assert.equal(attachment.extractedText, expected["sample.txt"].extractedText);
 			assert.equal(attachment.fileName, "sample.txt");
@@ -114,32 +114,27 @@ test("File, Blob, URL, text/code and image MIME contracts survive", async () => 
 			["sample.xls", "application/vnd.ms-excel"],
 		]) {
 			const a = await p.evaluate(
-				({ local, name, mimeType }) => window.attachmentProcessingFixture.load(local, name, "blob", mimeType),
-				{ local, name, mimeType },
+				({ name, mimeType }) => window.attachmentProcessingFixture.load(name, "blob", mimeType),
+				{ name, mimeType },
 			);
 			assert.equal(a.extractedText, expected[name].extractedText);
 			assert.equal(a.mimeType, mimeType === "text/plain" ? expected[name].mimeType : mimeType);
 		}
 		for (const extension of ["txt", "md", "json", "xml", "html", "css", "js", "ts", "jsx", "tsx", "yaml", "yml"]) {
 			const a = await p.evaluate(
-				({ local, extension }) =>
-					window.attachmentProcessingFixture.raw(local, "const café = '<value>';", `code.${extension}`),
-				{ local, extension },
+				({ extension }) => window.attachmentProcessingFixture.raw("const café = '<value>';", `code.${extension}`),
+				{ extension },
 			);
 			assert.equal(a.extractedText, "const café = '<value>';");
 			assert.equal(a.mimeType, "text/plain");
 		}
-		const image = await p.evaluate(
-			(local) => window.attachmentProcessingFixture.raw(local, "image bytes", "picture.png", "image/png"),
-			local,
+		const image = await p.evaluate(() =>
+			window.attachmentProcessingFixture.raw("image bytes", "picture.png", "image/png"),
 		);
 		assert.equal(image.type, "image");
 		assert.equal(image.preview, image.content);
 		assert.equal(image.extractedText, undefined);
-		const unnamed = await p.evaluate(
-			(local) => window.attachmentProcessingFixture.raw(local, "hello", undefined, "text/plain"),
-			local,
-		);
+		const unnamed = await p.evaluate(() => window.attachmentProcessingFixture.raw("hello", undefined, "text/plain"));
 		assert.equal(unnamed.fileName, "unnamed");
 	}
 	await p.close();
@@ -149,22 +144,20 @@ test("unsupported attachments and parser errors retain the baseline guidance", a
 	const p = await page();
 	for (const name of ["unknown.xyz", "image.png", "bad.pdf", "bad.docx", "bad.pptx"]) {
 		const errors = [];
-		for (const local of [false, true]) {
-			errors.push(
-				await p.evaluate(
-					async ({ local, name }) => {
-						try {
-							await window.attachmentProcessingFixture.raw(local, "invalid", name);
-						} catch (error) {
-							return error.message;
-						}
-					},
-					{ local, name },
-				),
-			);
-		}
-		assert.equal(errors[1], errors[0], name);
-		assert.match(errors[1], /Unsupported file type|Failed to process/);
+		errors.push(
+			await p.evaluate(
+				async ({ name }) => {
+					try {
+						await window.attachmentProcessingFixture.raw("invalid", name);
+					} catch (error) {
+						return error.message;
+					}
+				},
+				{ name },
+			),
+		);
+		assert.equal(errors[0], recorded.errors[name], name);
+		assert.match(errors[0], /Unsupported file type|Failed to process/);
 	}
 	await p.close();
 });
@@ -172,8 +165,8 @@ test("unsupported attachments and parser errors retain the baseline guidance", a
 test("extract_document output and details preserve all supported formats", async () => {
 	const p = await page();
 	for (const name of Object.keys(expected)) {
-		const baseline = await p.evaluate((name) => window.attachmentProcessingFixture.tool(false, name), name);
-		const local = await p.evaluate((name) => window.attachmentProcessingFixture.tool(true, name), name);
+		const baseline = recorded.tools[name];
+		const local = await p.evaluate((name) => window.attachmentProcessingFixture.tool(name), name);
 		assert.deepEqual(local, baseline, name);
 		assert.deepEqual(local.content, [{ type: "text", text: expected[name].extractedText }]);
 	}
@@ -199,24 +192,21 @@ test("direct fetch, proxy retries, mutable proxy settings and manual-download er
 		"fetch-abort",
 	]) {
 		for (const proxy of [undefined, "https://proxy.test/?url="]) {
-			const baseline = await p.evaluate(
-				({ scenario, proxy }) => window.attachmentProcessingFixture.simulate(false, scenario, undefined, proxy),
-				{ scenario, proxy },
-			);
+			const baseline = recorded.fetch[`${scenario} ${proxy}`];
 			const local = await p.evaluate(
-				({ scenario, proxy }) => window.attachmentProcessingFixture.simulate(true, scenario, undefined, proxy),
+				({ scenario, proxy }) => window.attachmentProcessingFixture.simulate(scenario, undefined, proxy),
 				{ scenario, proxy },
 			);
 			assert.deepEqual(local, baseline, `${scenario} ${proxy}`);
 		}
 	}
 	for (const url of ["", "not-a-url", "https://example.test/unknown.xyz", "https://example.test/"]) {
-		const baseline = await p.evaluate((url) => window.attachmentProcessingFixture.simulate(false, "ok", url), url);
-		const local = await p.evaluate((url) => window.attachmentProcessingFixture.simulate(true, "ok", url), url);
+		const baseline = recorded.invalidUrls[url];
+		const local = await p.evaluate((url) => window.attachmentProcessingFixture.simulate("ok", url), url);
 		assert.deepEqual(local, baseline, url);
 	}
-	const first = await p.evaluate(() => window.attachmentProcessingFixture.mutableProxy(false));
-	const second = await p.evaluate(() => window.attachmentProcessingFixture.mutableProxy(true));
+	const first = recorded.mutableProxy;
+	const second = await p.evaluate(() => window.attachmentProcessingFixture.mutableProxy());
 	assert.deepEqual(second, first);
 	assert.match(second[3], /^https:\/\/second.test/);
 	await p.close();
@@ -226,8 +216,7 @@ test("abort signals cancel direct/proxy fetch and stop extraction after bytes ar
 	const p = await page();
 	for (const scenario of ["signal-abort", "proxy-abort", "body-abort"]) {
 		const result = await p.evaluate(
-			(scenario) =>
-				window.attachmentProcessingFixture.simulate(true, scenario, undefined, "https://proxy.test/?url="),
+			(scenario) => window.attachmentProcessingFixture.simulate(scenario, undefined, "https://proxy.test/?url="),
 			scenario,
 		);
 		assert.match(result.error, /aborted/i);
@@ -340,39 +329,30 @@ test(
 test("extract_document preserves header states, extracted text disclosure and error rendering", async () => {
 	const p = await page();
 	for (const state of ["preparing", "extracting", "streaming", "complete", "error"]) {
-		const snapshots = [];
-		for (const local of [false, true]) {
-			assert.equal(
-				(
-					await p.evaluate(({ local, state }) => window.attachmentProcessingFixture.show(local, state), {
-						local,
-						state,
-					})
-				).isCustom,
-				false,
-			);
-			snapshots.push({
-				label: await p
-					.locator("#render > div")
-					.evaluate(
-						(element) => element.querySelector("button")?.textContent.trim() || element.textContent.trim(),
-					),
-				spinners: await p.locator("#render .animate-spin").count(),
-				error: await p.locator("#render .text-destructive").count(),
-			});
-			if (state !== "preparing") {
-				const disclosure = p.locator("#render > div > div").last();
-				assert.match(await disclosure.getAttribute("class"), /max-h-0/);
-				await p.locator("#render button").first().click();
-				assert.doesNotMatch(await disclosure.getAttribute("class"), /max-h-0/);
-				if (state === "complete")
-					assert.equal(await p.locator("code-block code").innerText(), "Fixture extracted text");
-				if (state === "error")
-					assert.match(
-						await p.locator(local ? "sitegeist-console-block" : "console-block").innerText(),
-						/Fixture error/,
-					);
-			}
+		const snapshots = [recorded.renderers[state]];
+		assert.equal(
+			(
+				await p.evaluate(({ state }) => window.attachmentProcessingFixture.show(state), {
+					state,
+				})
+			).isCustom,
+			false,
+		);
+		snapshots.push({
+			label: await p
+				.locator("#render > div")
+				.evaluate((element) => element.querySelector("button")?.textContent.trim() || element.textContent.trim()),
+			spinners: await p.locator("#render .animate-spin").count(),
+			error: await p.locator("#render .text-destructive").count(),
+		});
+		if (state !== "preparing") {
+			const disclosure = p.locator("#render > div > div").last();
+			assert.match(await disclosure.getAttribute("class"), /max-h-0/);
+			await p.locator("#render button").first().click();
+			assert.doesNotMatch(await disclosure.getAttribute("class"), /max-h-0/);
+			if (state === "complete")
+				assert.equal(await p.locator("code-block code").innerText(), "Fixture extracted text");
+			if (state === "error") assert.match(await p.locator("sitegeist-console-block").innerText(), /Fixture error/);
 		}
 		assert.deepEqual(snapshots[1], snapshots[0], state);
 	}
@@ -385,21 +365,18 @@ test("special filenames and spreadsheet sheet names preserve raw prompt annotati
 	try {
 		for (const extension of ["pdf", "docx", "pptx", "xlsx", "xls"]) {
 			const fileName = `corrupt%ZZ" <file>&.${extension}`;
-			for (const local of [false, true]) {
+			{
 				const outcome = await p.evaluate(
-					({ local, sourceName, fileName }) =>
-						window.attachmentProcessingFixture.renamedDocument(local, sourceName, fileName),
-					{ local, sourceName: `sample.${extension}`, fileName },
+					({ sourceName, fileName }) => window.attachmentProcessingFixture.renamedDocument(sourceName, fileName),
+					{ sourceName: `sample.${extension}`, fileName },
 				);
 				assert.deepEqual(outcome, measured.names[extension]);
 				assert.ok(outcome.extractedText.includes(`filename="${fileName}"`));
 			}
 		}
-		for (const local of [false, true]) {
-			const outcome = await p.evaluate(
-				(local) =>
-					window.attachmentProcessingFixture.renamedDocument(local, "special-names.xlsx", 'special" <file>&.xlsx'),
-				local,
+		{
+			const outcome = await p.evaluate(() =>
+				window.attachmentProcessingFixture.renamedDocument("special-names.xlsx", 'special" <file>&.xlsx'),
 			);
 			assert.deepEqual(outcome, measured.names.specialSheet);
 			assert.ok(outcome.extractedText.includes('<sheet name="Quote" <angle>&" index="1">'));
@@ -417,20 +394,15 @@ test("headerless documents retain URL filename rules and enforce the actual body
 			"https://example.test/download?file=sample.pdf",
 			"https://example.test/download?file=sample.pdf#document",
 		]) {
-			const baseline = await p.evaluate(
-				(url) => window.attachmentProcessingFixture.headerlessDocument(false, url),
-				url,
-			);
-			const local = await p.evaluate((url) => window.attachmentProcessingFixture.headerlessDocument(true, url), url);
+			const baseline = recorded.headerless[url] ?? recorded.fragmentUrls[url] ?? recorded.queryUrl;
+			const local = await p.evaluate((url) => window.attachmentProcessingFixture.headerlessDocument(url), url);
 			assert.deepEqual(local, baseline);
 			assert.equal(local.error, "Unsupported file type: application/octet-stream");
 			assert.equal(local.bodyReads, 1);
 		}
-		const baseline = await p.evaluate(() =>
-			window.attachmentProcessingFixture.headerlessDocument(false, "https://example.test/sample.pdf", true),
-		);
+		const baseline = recorded.headerlessSize;
 		const local = await p.evaluate(() =>
-			window.attachmentProcessingFixture.headerlessDocument(true, "https://example.test/sample.pdf", true),
+			window.attachmentProcessingFixture.headerlessDocument("https://example.test/sample.pdf", true),
 		);
 		assert.deepEqual(local, baseline);
 		assert.equal(local.error, measured.urls.headerlessSize.error);
@@ -445,20 +417,19 @@ test("zero-byte documents and text mislabeled as PDF retain actual parser outcom
 	const p = await page();
 	try {
 		for (const extension of ["pdf", "docx", "pptx", "xlsx", "xls", "txt"]) {
-			for (const local of [false, true]) {
-				const outcome = await p.evaluate(
-					({ local, name }) => window.attachmentProcessingFixture.emptyOrMislabeled(local, name),
-					{ local, name: `empty.${extension}` },
-				);
-				assert.deepEqual(outcome, measured.empty[extension], `${local ? "local" : "baseline"} ${extension}`);
+			{
+				const outcome = await p.evaluate(({ name }) => window.attachmentProcessingFixture.emptyOrMislabeled(name), {
+					name: `empty.${extension}`,
+				});
+				assert.deepEqual(outcome, measured.empty[extension], `local ${extension}`);
 			}
 		}
 		for (const name of ["unknown", "mislabeled.txt"]) {
-			for (const local of [false, true]) {
+			{
 				const outcome = await p.evaluate(
-					({ local, name }) =>
-						window.attachmentProcessingFixture.emptyOrMislabeled(local, name, "plain text", "application/pdf"),
-					{ local, name },
+					({ name }) =>
+						window.attachmentProcessingFixture.emptyOrMislabeled(name, "plain text", "application/pdf"),
+					{ name },
 				);
 				assert.deepEqual(outcome, measured.empty[name]);
 			}
@@ -479,11 +450,8 @@ test("existing URL scheme and private-host behavior is preserved with every fetc
 			"http://169.254.169.254/sample.txt",
 			"data:text/plain,fixture.txt",
 		]) {
-			const baseline = await p.evaluate(
-				(url) => window.attachmentProcessingFixture.unrestrictedUrl(false, url),
-				url,
-			);
-			const local = await p.evaluate((url) => window.attachmentProcessingFixture.unrestrictedUrl(true, url), url);
+			const baseline = recorded.unrestrictedUrls[url];
+			const local = await p.evaluate((url) => window.attachmentProcessingFixture.unrestrictedUrl(url), url);
 			assert.deepEqual(local, baseline, url);
 			assert.deepEqual(local.calls, [url]);
 			assert.deepEqual(local.result.content, [{ type: "text", text: "Fixture URL text" }]);
@@ -503,11 +471,8 @@ test("fragment extensions and query slash ordering retain successful baseline pa
 			["https://example.test/download?redirect=/nested/sample.pdf", "sample.pdf"],
 			["https://example.test/download#docs/path/sample.pdf", "sample.pdf"],
 		]) {
-			const baseline = await p.evaluate(
-				(url) => window.attachmentProcessingFixture.headerlessDocument(false, url),
-				url,
-			);
-			const local = await p.evaluate((url) => window.attachmentProcessingFixture.headerlessDocument(true, url), url);
+			const baseline = recorded.headerless[url] ?? recorded.fragmentUrls[url] ?? recorded.queryUrl;
+			const local = await p.evaluate((url) => window.attachmentProcessingFixture.headerlessDocument(url), url);
 			assert.deepEqual(local, baseline, url);
 			assert.equal(local.bodyReads, 1);
 			assert.equal(local.result.details.fileName, fileName);
@@ -521,11 +486,8 @@ test("fragment extensions and query slash ordering retain successful baseline pa
 			}
 		}
 		const url = "https://example.test/sample.pdf?redirect=/nested/sample.txt";
-		const baseline = await p.evaluate(
-			(url) => window.attachmentProcessingFixture.headerlessDocument(false, url),
-			url,
-		);
-		const local = await p.evaluate((url) => window.attachmentProcessingFixture.headerlessDocument(true, url), url);
+		const baseline = recorded.headerless[url] ?? recorded.fragmentUrls[url] ?? recorded.queryUrl;
+		const local = await p.evaluate((url) => window.attachmentProcessingFixture.headerlessDocument(url), url);
 		assert.deepEqual(local, baseline);
 		assert.equal(local.result.details.fileName, "sample.txt");
 		assert.equal(local.result.details.format, "unknown");

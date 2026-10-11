@@ -116,7 +116,7 @@ Validates library syntax after patching. Safer than full update when changing sm
 await skill({ action: 'delete', name: 'old-skill' })
 ```
 
-**Implementation**: [src/tools/skill.ts](../src/tools/skill.ts:236-520)
+**Implementation**: [src/tools/skill.ts](../src/tools/skill.ts)
 
 ## Domain Matching
 
@@ -251,7 +251,7 @@ Skills are shown as interactive pills in the chat when relevant.
 **Core Implementation:**
 - [src/tools/skill.ts](../src/tools/skill.ts) - Skill tool, validation, defaults
 - [src/storage/stores/skills-store.ts](../src/storage/stores/skills-store.ts) - Storage and matching
-- [src/prompts/tool-prompts.ts](../src/prompts/tool-prompts.ts) - Tool description for LLM
+- [src/prompts/prompts.ts](../src/prompts/prompts.ts) - Skill tool description for the model
 
 **UI Components:**
 - [src/dialogs/SkillsTab.ts](../src/dialogs/SkillsTab.ts) - Settings management UI

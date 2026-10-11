@@ -1,5 +1,5 @@
 import { setTranslations } from "@mariozechner/mini-lit";
-import { translations as webUiTranslations } from "@mariozechner/pi-web-ui/dist/utils/i18n.js";
+import { localTranslations } from "./translations.js";
 
 declare module "@mariozechner/mini-lit" {
 	interface i18nMessages {
@@ -31,7 +31,6 @@ declare module "@mariozechner/mini-lit" {
 		"Getting current date and time": string;
 		Artifacts: string;
 		"Show artifacts": string;
-		// Web-UI base keys (needed for type safety)
 		"Delete this session?": string;
 		Today: string;
 		Yesterday: string;
@@ -271,10 +270,9 @@ const sitegeistTranslations = {
 	},
 };
 
-// Merge web-ui translations with sitegeist translations
 const mergedTranslations = {
-	en: { ...webUiTranslations.en, ...sitegeistTranslations.en },
-	de: { ...webUiTranslations.de, ...sitegeistTranslations.de },
+	en: { ...localTranslations.en, ...sitegeistTranslations.en },
+	de: { ...localTranslations.de, ...sitegeistTranslations.de },
 };
 
 setTranslations(mergedTranslations);

@@ -2,13 +2,13 @@
 
 ## Overview
 
-Sitegeist uses a key-value settings store for application configuration like theme, proxy settings, and user preferences. Settings are stored in IndexedDB and accessed through the `SettingsStore` class from `@mariozechner/pi-web-ui`.
+Sitegeist owns its `SettingsStore` in `src/storage/stores/settings-store.ts`. It stores application settings as key/value records in the local `sitegeist-storage` IndexedDB database, through the `StorageBackend` defined in `src/storage/types.ts`.
 
 ## Architecture
 
 ### SettingsStore
 
-The `SettingsStore` is a simple key-value store with no schema constraints. It provides basic CRUD operations:
+The local `SettingsStore` is a key-value store with no schema validation. It provides:
 
 ```typescript
 class SettingsStore {
@@ -22,10 +22,10 @@ class SettingsStore {
 
 ### Accessing Settings
 
-Settings are accessed through the global `AppStorage` instance:
+Settings are accessed through `AppStorage` (or `SitegeistAppStorage` when Sitegeist-specific stores are needed):
 
 ```typescript
-import { getSitegeistStorage } from "./storage/app-storage.js";
+import { getSitegeistStorage } from "../src/storage/app-storage.js";
 
 const storage = getSitegeistStorage();
 
@@ -43,16 +43,20 @@ Settings are stored in IndexedDB under:
 - **Store**: `settings`
 - **Key Path**: Out-of-line keys (keys stored separately from values)
 
+`SettingsStore.get<T>()` returns `T | null`; the generic is a caller-side type assertion and does not validate values loaded from IndexedDB.
+
 ## Existing Settings
 
 ### Proxy Configuration
 
-Used for CORS proxy support when making cross-origin requests:
+Used by the local provider stream and document-extraction paths when a CORS proxy is enabled:
 
 | Key | Type | Description |
 |-----|------|-------------|
 | `proxy.enabled` | `boolean` | Whether the CORS proxy is enabled |
 | `proxy.url` | `string` | URL of the CORS proxy server |
+
+If these values are absent, the Proxy tab displays `false` and `http://localhost:3001`. The sidepanel currently writes `proxy.enabled = false` during startup, so proxy use starts disabled on each run until enabled in Settings; it does not reset `proxy.url`.
 
 **Example:**
 ```typescript
@@ -61,7 +65,7 @@ const proxyEnabled = await storage.settings.get<boolean>("proxy.enabled");
 
 // Set proxy configuration
 await storage.settings.set("proxy.enabled", true);
-await storage.settings.set("proxy.url", "https://proxy.mariozechner.at/proxy");
+await storage.settings.set("proxy.url", "https://corsproxy.io");
 ```
 
 ### Last Used Model
@@ -70,19 +74,16 @@ Stores the most recently selected model to restore on new sessions:
 
 | Key | Type |
 |-----|------|
-| `lastUsedModel` | `Model<any>` |
+| `lastUsedModel` | Saved model selection, read as `unknown` and resolved by the application model configuration |
 
 **Example:**
 ```typescript
 // Save last used model
 await storage.settings.set("lastUsedModel", model);
 
-// Restore last used model
-const model = await storage.settings.get<string>("lastUsedModel");
-
-if (model) {
-  ...
-}
+// Resolve saved data against the current provider/model configuration.
+const savedModel = await storage.settings.get<unknown>("lastUsedModel");
+const model = await modelConfiguration.resolveModel(savedModel);
 ```
 
 ## Adding New Settings
@@ -103,36 +104,28 @@ Use dot notation for namespacing related settings:
 
 ### Step 2: Define TypeScript Type
 
-Create a type for type-safe access:
+Define a type for the value you store and use it at the read site. The generic documents the expected value shape but does not validate it at runtime:
 
 ```typescript
-interface LastUsedModel {
-  provider: string;
-  modelId: string;
+interface FeatureSettings {
+  enabled: boolean;
+  mode: "safe" | "fast";
 }
+
+const feature = await storage.settings.get<FeatureSettings>("feature.config");
 ```
 
 ### Step 3: Read and Write Settings
 
 ```typescript
-// Write
-const model = agent.state.model;
-await storage.settings.set("lastUsedModel.provider", model.provider);
-await storage.settings.set("lastUsedModel.modelId", model.id);
+// Sitegeist persists the selected model under one key.
+await storage.settings.set("lastUsedModel", agent.state.model);
 
-// Read
-const provider = await storage.settings.get<string>("lastUsedModel.provider");
-const modelId = await storage.settings.get<string>("lastUsedModel.modelId");
-
-// Use with validation
-if (provider && modelId) {
-  try {
-    const model = getModel(provider as any, modelId);
-    // Use model
-  } catch (error) {
-    // Handle invalid model (provider/model no longer exists)
-    console.error("Failed to restore model:", error);
-  }
+// Resolve saved data instead of trusting its shape or casting a provider name.
+const savedModel = await storage.settings.get<unknown>("lastUsedModel");
+const model = await modelConfiguration.resolveModel(savedModel);
+if (!model) {
+  // Keep the selection flow explicit if the saved provider/model is unavailable.
 }
 ```
 
@@ -185,19 +178,13 @@ document.body.style.fontSize = `${fontSize}px`; // Crashes if null
 
 ### 4. Validate Complex Settings
 
-For settings that depend on external state (like model IDs), validate after reading:
+For settings that depend on external state (such as a saved model), resolve the value against the current application configuration before using it:
 
 ```typescript
-const modelId = await storage.settings.get<string>("lastUsedModel.modelId");
-if (modelId) {
-  try {
-    // Validate the model still exists
-    const model = getModel(provider as any, modelId);
-    agent.setModel(model);
-  } catch (error) {
-    // Model no longer exists, fall back to default
-    console.warn("Saved model not found, using default");
-  }
+const savedModel = await storage.settings.get<unknown>("lastUsedModel");
+const model = await modelConfiguration.resolveModel(savedModel);
+if (!model) {
+  // Keep the selection flow explicit if the saved provider/model is unavailable.
 }
 ```
 
@@ -206,7 +193,7 @@ if (modelId) {
 Always have sensible defaults when settings are missing:
 
 ```typescript
-const proxyUrl = await storage.settings.get<string>("proxy.url") ?? "https://proxy.mariozechner.at/proxy";
+const proxyUrl = await storage.settings.get<string>("proxy.url") ?? "http://localhost:3001";
 const proxyEnabled = await storage.settings.get<boolean>("proxy.enabled") ?? false;
 ```
 
@@ -230,10 +217,7 @@ const proxyEnabled = await storage.settings.get<boolean>("proxy.enabled") ?? fal
 await storage.settings.set("ui.theme", "dark");
 
 // ✅ Session - Specific to one conversation
-await storage.sessions.saveSession(sessionId, {
-  model: currentModel,
-  messages: chatHistory,
-});
+await storage.sessions.saveSession(sessionId, agent.state, metadata, title);
 ```
 
 ## Debugging
@@ -356,7 +340,7 @@ interface ProxyConfig {
 // Write
 const config: ProxyConfig = {
   enabled: true,
-  url: "https://proxy.mariozechner.at/proxy",
+  url: "http://localhost:3001",
   timeout: 5000,
 };
 await storage.settings.set("proxy", config);
@@ -371,5 +355,4 @@ if (config) {
 ## See Also
 
 - [Storage Architecture](./storage.md) - Overall storage system
-- [Session Management](./storage.md#sessions) - Session-specific data
-- [Provider Keys](./storage.md#provider-keys) - API key storage
+- [Storage architecture](./storage.md) - Session, provider-key, and custom-provider stores

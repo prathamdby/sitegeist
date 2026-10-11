@@ -1,0 +1,208 @@
+{
+	"bounds": {
+		"1200-light": [
+			{
+				"x": 24,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 88,
+				"bottom": 88,
+				"left": 24
+			},
+			{
+				"x": 96,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 160,
+				"bottom": 88,
+				"left": 96
+			},
+			{
+				"x": 168,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 232,
+				"bottom": 88,
+				"left": 168
+			},
+			{
+				"x": 240,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 304,
+				"bottom": 88,
+				"left": 240
+			},
+			{
+				"x": 312,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 376,
+				"bottom": 88,
+				"left": 312
+			},
+			{
+				"x": 384,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 448,
+				"bottom": 88,
+				"left": 384
+			}
+		],
+		"390-light": [
+			{
+				"x": 24,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 88,
+				"bottom": 88,
+				"left": 24
+			},
+			{
+				"x": 96,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 160,
+				"bottom": 88,
+				"left": 96
+			},
+			{
+				"x": 168,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 232,
+				"bottom": 88,
+				"left": 168
+			},
+			{
+				"x": 240,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 304,
+				"bottom": 88,
+				"left": 240
+			},
+			{
+				"x": 24,
+				"y": 96,
+				"width": 64,
+				"height": 64,
+				"top": 96,
+				"right": 88,
+				"bottom": 160,
+				"left": 24
+			},
+			{
+				"x": 96,
+				"y": 96,
+				"width": 64,
+				"height": 64,
+				"top": 96,
+				"right": 160,
+				"bottom": 160,
+				"left": 96
+			}
+		],
+		"1200-dark": [
+			{
+				"x": 24,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 88,
+				"bottom": 88,
+				"left": 24
+			},
+			{
+				"x": 96,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 160,
+				"bottom": 88,
+				"left": 96
+			},
+			{
+				"x": 168,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 232,
+				"bottom": 88,
+				"left": 168
+			},
+			{
+				"x": 240,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 304,
+				"bottom": 88,
+				"left": 240
+			},
+			{
+				"x": 312,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 376,
+				"bottom": 88,
+				"left": 312
+			},
+			{
+				"x": 384,
+				"y": 24,
+				"width": 64,
+				"height": 64,
+				"top": 24,
+				"right": 448,
+				"bottom": 88,
+				"left": 384
+			}
+		]
+	},
+	"fallback": [
+		"notes.txt No content available",
+		"mystery.bin No content available",
+		"sample.png",
+		"<fixture-origin>/notes.txt No content available",
+		"report.pdf",
+		"deck.pptx No text content available",
+		"NOTES.PDF Attachment fixture Second line"
+	],
+	"locale": {
+		"remove": "Entfernen",
+		"files": [
+			"notes.txt Attachment fixture Second line",
+			"report.pdf PDF Text Fehler beim Laden der Datei Invalid PDF structure.",
+			"deck.pptx Slide 1 Presentation fixture",
+			"notes.txt Kein Inhalt verfügbar"
+		]
+	}
+}

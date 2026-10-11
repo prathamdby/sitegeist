@@ -1,10 +1,7 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, watch } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, rmSync, watch } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, context } from "esbuild";
-import { chatBridge } from "./chat-bridge.mjs";
-import { settingsBridge } from "./settings-bridge.mjs";
-import { storageBridge } from "./storage-bridge.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -27,7 +24,6 @@ rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
 const buildOptions = {
-	plugins: [storageBridge(packageRoot), settingsBridge(packageRoot), chatBridge(packageRoot)],
 	absWorkingDir: packageRoot,
 	entryPoints,
 	bundle: true,
@@ -47,16 +43,8 @@ const buildOptions = {
 		global: "globalThis",
 	},
 	inject: [join(packageRoot, "scripts/process-shim.js")],
-	// Force all mini-lit and lit imports to resolve to sitegeist's node_modules
 	alias: {
-		"@mariozechner/pi-ai": join(packageRoot, "src/pi/models.ts"),
-		"@mariozechner/pi-agent-core": join(packageRoot, "src/pi/agent.ts"),
 		process: join(packageRoot, "scripts/process-shim.js"),
-		"@mariozechner/mini-lit": join(packageRoot, "node_modules/@mariozechner/mini-lit"),
-		lit: join(packageRoot, "node_modules/lit"),
-		"lit/decorators.js": join(packageRoot, "node_modules/lit/decorators.js"),
-		"lit/directives/class-map.js": join(packageRoot, "node_modules/lit/directives/class-map.js"),
-		"lit/directives/unsafe-html.js": join(packageRoot, "node_modules/lit/directives/unsafe-html.js"),
 	},
 };
 
@@ -83,11 +71,7 @@ const copyStatic = () => {
 		copyFileSync(source, destination);
 	}
 
-	// Copy PDF.js worker from node_modules (check both local and monorepo root)
-	let pdfWorkerSource = join(packageRoot, "node_modules/pdfjs-dist/build/pdf.worker.min.mjs");
-	if (!existsSync(pdfWorkerSource)) {
-		pdfWorkerSource = join(packageRoot, "../../node_modules/pdfjs-dist/build/pdf.worker.min.mjs");
-	}
+	const pdfWorkerSource = join(packageRoot, "node_modules/pdfjs-dist/build/pdf.worker.min.mjs");
 	const pdfWorkerDestDir = join(outDir, "pdfjs-dist/build");
 	mkdirSync(pdfWorkerDestDir, { recursive: true });
 	const pdfWorkerDest = join(pdfWorkerDestDir, "pdf.worker.min.mjs");

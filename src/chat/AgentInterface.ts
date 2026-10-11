@@ -85,6 +85,14 @@ export class AgentInterface extends LitElement {
 		this.streamingKey = undefined;
 		this.results.clear();
 		this.unsubscribe = this.session?.subscribe((event) => this.handleEvent(event));
+		const agent = this.session;
+		if (agent && this.streaming) {
+			agent.waitForIdle().then(() => {
+				if (this.subscribedAgent !== agent) return;
+				this.streaming = agent.state.isStreaming;
+				this.requestUpdate();
+			});
+		}
 	}
 
 	private cancelFrame(): void {
@@ -227,7 +235,7 @@ export class AgentInterface extends LitElement {
 
 	override render() {
 		const state = this.session?.state;
-		const messages = state?.messages ?? [];
+		const messages = state?.messages.slice() ?? [];
 		const toolResultsById = new Map(this.results);
 		for (const message of messages)
 			if (message.role === "toolResult") toolResultsById.set(message.toolCallId, message);

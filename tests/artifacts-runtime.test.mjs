@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
-import { ArtifactsRuntimeProvider as BaselineProvider } from "../node_modules/@mariozechner/pi-web-ui/dist/components/sandbox/ArtifactsRuntimeProvider.js";
 import { ArtifactsRuntimeProvider } from "../src/artifacts/ArtifactsRuntimeProvider.ts";
 
 function fixture(Provider = ArtifactsRuntimeProvider, readWrite = true) {
@@ -42,7 +41,7 @@ function operation(provider, message) {
 }
 
 test("artifact snapshot helpers match retained public reads and standalone write rejection", async () => {
-	for (const Provider of [BaselineProvider, ArtifactsRuntimeProvider]) {
+	for (const Provider of [ArtifactsRuntimeProvider]) {
 		const { provider, panel } = fixture(Provider);
 		panel.artifacts.delete("__proto__");
 		const target = runtime(provider);

@@ -16,14 +16,14 @@ interface ToolRenderResult {
 ```
 
 - **`content`**: Lit template to render
-- **`isCustom`**:
-  - `true` - No card wrapper, renderer controls everything
-  - `false` - Wrap content in default card border
+- **`isCustom`**: Result metadata returned by the renderer. The current `sitegeist-tool-message` wraps `content` in its chat card either way, so do not rely on this flag to suppress the outer wrapper.
 
 ### ToolRenderer Interface
 
+The local registry imports `JsonObject`, `JsonValue`, and `ToolResultMessage` from Pi AI; renderer registration, lookup, and formatting helpers are owned by Sitegeist.
+
 ```typescript
-interface ToolRenderer<TParams = any, TDetails = any> {
+interface ToolRenderer<TParams = JsonObject, TDetails = JsonValue> {
   render(
     params: TParams | undefined,
     result: ToolResultMessage<TDetails> | undefined,
@@ -41,32 +41,30 @@ Receives:
 
 Renderers should handle all execution states:
 
-1. **No params yet**: Tool call initiated but parameters not received
-2. **Params streaming**: Partial parameters being received
-3. **Params complete**: Full parameters received, execution pending
-4. **Executing**: Tool running (params available, no result)
-5. **Complete**: Execution finished with result
-6. **Error**: Execution failed with error
+1. **Arguments unavailable**: The renderer accepts `params` as `undefined` while tool input is unavailable.
+2. **Executing**: Arguments are available, but the tool result is not.
+3. **Complete**: Execution finished with a result.
+4. **Error**: Execution failed with an error result.
 
 ## Implementation
 
 ### Registration
 
 ```typescript
-import { registerToolRenderer } from "@mariozechner/pi-web-ui";
+import { registerToolRenderer } from "../chat/renderers/index.js";
 
 registerToolRenderer("tool_name", toolRenderer);
 ```
 
-### Example: Default Card Wrapper
+### Example: Renderer Result
 
 ```typescript
 const myRenderer: ToolRenderer<MyParams, MyResult> = {
   render(params, result, isStreaming) {
     if (result) {
       return {
-        content: html`<div class="result">${result.output}</div>`,
-        isCustom: false, // Wrap in card
+        content: html`<div class="result">${toolResultText(result)}</div>`,
+        isCustom: false,
       };
     }
 
@@ -78,12 +76,12 @@ const myRenderer: ToolRenderer<MyParams, MyResult> = {
 };
 ```
 
-### Example: Custom Rendering (No Card)
+### Example: Custom Template Content
 
 ```typescript
 const navigateRenderer: ToolRenderer<NavigateParams, NavigateResult> = {
   render(params, result) {
-    if (result && !result.isError) {
+    if (result && !result.isError && result.details) {
       return {
         content: html`
           <div class="my-2">
@@ -93,7 +91,7 @@ const navigateRenderer: ToolRenderer<NavigateParams, NavigateResult> = {
             </button>
           </div>
         `,
-        isCustom: true, // No card wrapper
+        isCustom: true,
       };
     }
 
@@ -107,17 +105,20 @@ const navigateRenderer: ToolRenderer<NavigateParams, NavigateResult> = {
 
 ## Built-in Renderers
 
-**web-ui Package:**
-- `bash` - Command execution with console output (BashRenderer)
-- `javascript_repl` - Sandboxed JavaScript REPL with console output
-- `extract_document` - Document extraction from web pages
-- `artifacts` - File artifact management (ArtifactsToolRenderer)
+**Sitegeist built-in renderers** (`src/tools/index.ts`):
+- `bash` - Command output via `BashRenderer`
+- `calculate` - Expression status via `CalculateRenderer`
+- `get_current_time` - Time lookup via `GetCurrentTimeRenderer`
 
-**sitegeist Extension:**
+**Tool-specific renderers**:
 - `repl` - Page JavaScript execution with collapsible code
-- `skill` - Skill management operations (list, get, create, update, delete, patch)
-- `navigate` - Page navigation with favicon display
+- `javascript_repl` - Debug REPL rendering
+- `skill` - Skill management operations
+- `navigate` - Page navigation
+- `ask_user_which_element` - Element picker
+- `extract_document` and `extract_image` - Document and image extraction
 - `debugger` - Browser debugger tool
+- `artifacts` - Registered by `ChatPanel` when initialized
 
 ## Best Practices
 
@@ -136,12 +137,12 @@ render(params, result, isStreaming) {
 
   // Error state
   if (result?.isError) {
-    return { content: html`<div class="text-destructive">${result.output}</div>`, isCustom: false };
+    return { content: html`<div class="text-destructive">${toolResultText(result)}</div>`, isCustom: false };
   }
 
   // Success state
   if (result) {
-    return { content: html`<div>${result.output}</div>`, isCustom: false };
+    return { content: html`<div>${toolResultText(result)}</div>`, isCustom: false };
   }
 
   // Waiting state
@@ -149,24 +150,15 @@ render(params, result, isStreaming) {
 }
 ```
 
-### Custom Rendering Guidelines
-Use `isCustom: true` when:
-- Tool needs precise positioning (e.g., inline pills, navigation UI)
-- Card border would disrupt visual flow
-- Implementing custom container styling
+### `isCustom` Result Flag
 
-Use `isCustom: false` when:
-- Tool displays standard content (logs, text, code)
-- Card border provides useful visual separation
-- Using default tool message styling
+Set `isCustom` to the value appropriate for the renderer's result contract, but note that `sitegeist-tool-message` currently wraps returned content in its card regardless of the flag. Custom renderers control the template content; they do not remove that outer wrapper.
 
 ## Files
 
 **Core:**
-- `pi-mono/packages/web-ui/src/tools/types.ts` - Interfaces
-- `pi-mono/packages/web-ui/src/tools/renderer-registry.ts` - Registration
-- `pi-mono/packages/web-ui/src/components/Messages.ts` - Rendering logic
-
-**Renderers:**
-- `pi-mono/packages/web-ui/src/tools/renderers/` - Built-in renderers
-- `sitegeist/src/tools/` - Extension-specific renderers
+- `src/chat/renderers/tool-registry.ts` - Renderer and result contracts, registry, default renderer
+- `src/chat/renderers/Messages.ts` - Tool-call rendering
+- `src/chat/renderers/MessageList.ts` - Message and result matching
+- `src/tools/` - Tool-specific renderer registrations
+- `src/artifacts/ArtifactsToolRenderer.ts` - Artifact renderer

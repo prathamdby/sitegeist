@@ -77,14 +77,14 @@ test("new agent preserves the prompt and tool declarations through the browser c
 		}),
 	]);
 	const events = [];
-	let previousMessages = agent.state.messages;
+	const nativeMessages = agent.state.messages;
 	agent.subscribe((event) => {
 		events.push(event.type);
 		if (event.type === "message_end") {
-			assert.notEqual(agent.state.messages, previousMessages);
-			previousMessages = agent.state.messages;
+			assert.equal(agent.state.messages, nativeMessages);
+			assert.equal(agent.state.messages.at(-1), event.message);
 		}
-		if (event.type === "agent_end") assert.equal(agent.state.isStreaming, false);
+		if (event.type === "agent_end") assert.equal(agent.state.isStreaming, true);
 	});
 	await agent.prompt("Run both tools.");
 	assert.equal(requests.length, 2);

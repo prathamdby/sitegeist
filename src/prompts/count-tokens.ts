@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { artifactsParamsSchema } from "../artifacts/ArtifactsState.js";
 /**
  * Count tokens in system prompts using Anthropic's token counter API
  */
@@ -6,9 +7,8 @@ import {
 	ARTIFACTS_RUNTIME_PROVIDER_DESCRIPTION_RO,
 	ARTIFACTS_RUNTIME_PROVIDER_DESCRIPTION_RW,
 	ARTIFACTS_TOOL_DESCRIPTION,
-	ATTACHMENTS_RUNTIME_DESCRIPTION,
-	EXTRACT_DOCUMENT_DESCRIPTION,
-} from "../../../pi-mono/packages/web-ui/dist/prompts/prompts.js";
+} from "./artifacts.js";
+import { ATTACHMENTS_RUNTIME_DESCRIPTION, EXTRACT_DOCUMENT_DESCRIPTION } from "./attachments.js";
 import {
 	ASK_USER_WHICH_ELEMENT_TOOL_DESCRIPTION,
 	BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION,
@@ -47,29 +47,7 @@ export const TOOL_DEFINITIONS = [
 			ARTIFACTS_RUNTIME_PROVIDER_DESCRIPTION_RO,
 			ATTACHMENTS_RUNTIME_DESCRIPTION,
 		]),
-		input_schema: {
-			type: "object",
-			properties: {
-				action: {
-					type: "string",
-					enum: ["createOrUpdate", "get", "delete", "list"],
-					description: "Action to perform",
-				},
-				filename: {
-					type: "string",
-					description: "Filename of the artifact",
-				},
-				content: {
-					type: "string",
-					description: "Content of the artifact. For binary files, provide a base64-encoded string.",
-				},
-				mimeType: {
-					type: "string",
-					description: "MIME type of the artifact (e.g., 'image/png' for PNG images). Required for binary files.",
-				},
-			},
-			required: ["action"],
-		},
+		input_schema: artifactsParamsSchema,
 	},
 	{
 		name: "navigate",
@@ -189,8 +167,8 @@ interface TokenCountResponse {
 	input_tokens: number;
 }
 
-async function countTokens(system: string, message?: string, tools?: any[]): Promise<number> {
-	const body: any = {
+async function countTokens(system: string, message?: string, tools?: typeof TOOL_DEFINITIONS): Promise<number> {
+	const body = {
 		model: "claude-3-5-sonnet-20241022",
 		system,
 		messages: [
@@ -199,11 +177,8 @@ async function countTokens(system: string, message?: string, tools?: any[]): Pro
 				content: message || "test",
 			},
 		],
+		...(tools?.length ? { tools } : {}),
 	};
-
-	if (tools && tools.length > 0) {
-		body.tools = tools;
-	}
 
 	const response = await fetch("https://api.anthropic.com/v1/messages/count_tokens", {
 		method: "POST",

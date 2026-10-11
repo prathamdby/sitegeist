@@ -11,6 +11,7 @@
 - Replaced attachment processing, previews, REPL file access and document extraction with local implementations, preserving upload flows, parser formats and saved attachment bytes.
 - Replaced production REPL and skill sandbox execution with a local runtime bridge, preserving browser helpers, attachment reads, cancellation and extension CSP.
 - Replaced artifact storage, previews, downloads and the debug JavaScript REPL with local implementations, retaining the existing controls and stored artifact messages.
+- Retired the legacy Pi UI package and temporary bridges. Locked npm dependencies now support installation, development watchers, checks and releases without sibling repositories.
 
 ### Fixed
 
@@ -19,6 +20,7 @@
 - Enforced read-only artifact access from isolated HTML previews and excluded failed artifact operations from session restoration.
 - Escaped sandbox identifiers in runtime scripts so script-data markers in filenames cannot swallow downloaded HTML documents.
 - Fixed sidepanel startup hanging on Loading while restoring artifacts before the panel is attached.
+- Restored full-size artifact-panel host layout when switching between split and narrow overlay modes.
 
 ### Removed
 
