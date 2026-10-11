@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { settingsBridge } from "./settings-bridge.mjs";
 import { storageBridge } from "./storage-bridge.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const result = await build({
-	plugins: [storageBridge(root)],
+	plugins: [storageBridge(root), settingsBridge(root)],
 	absWorkingDir: root,
 	entryPoints: ["src/sidepanel.ts", "src/debug.ts", "src/background.ts"],
 	bundle: true,
@@ -37,5 +38,12 @@ assert.deepEqual(
 	"Legacy storage implementations must not enter the browser bundle",
 );
 assert.ok(inputs.some((path) => path.includes("@earendil-works/pi-agent-core/dist/agent.js")));
+assert.deepEqual(
+	inputs.filter((path) =>
+		/pi-(?:mono\/packages\/web-ui|web-ui)\/(?:dist|src)\/dialogs\/(?:ModelSelector|SettingsDialog)\./.test(path),
+	),
+	[],
+	"Legacy selector/settings implementations must not enter the browser bundle",
+);
 assert.ok(inputs.some((path) => path.includes("@earendil-works/pi-ai/dist/models.js")));
 console.log(`Browser bundle verified: ${inputs.length} inputs, zero legacy SDK implementations.`);

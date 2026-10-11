@@ -3,6 +3,7 @@ import { DialogContent, DialogHeader } from "@mariozechner/mini-lit/dist/Dialog.
 import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import { html } from "lit";
 import { Toast } from "../components/Toast.js";
+import "../components/ProviderKeyInput.js";
 import {
 	getOAuthProviderName,
 	isOAuthProvider,
@@ -11,8 +12,6 @@ import {
 	serializeOAuthCredentials,
 } from "../oauth/index.js";
 import { getAppStorage } from "../storage/app-storage.js";
-// ProviderKeyInput custom element is registered via pi-web-ui main export
-import "@mariozechner/pi-web-ui";
 
 /**
  * Prompt dialog shown when trying to use a provider with no key.
@@ -151,7 +150,7 @@ export class ApiKeyOrOAuthDialog extends DialogBase {
 
 					<div class="flex flex-col gap-3">
 						<h3 class="text-sm font-semibold text-foreground">API Key</h3>
-						<provider-key-input .provider=${this.provider}></provider-key-input>
+						<sitegeist-provider-key-input .provider=${this.provider}></sitegeist-provider-key-input>
 					</div>
 				`,
 			})}
@@ -159,6 +158,6 @@ export class ApiKeyOrOAuthDialog extends DialogBase {
 	}
 }
 
-if (!customElements.get("api-key-or-oauth-dialog")) {
-	customElements.define("api-key-or-oauth-dialog", ApiKeyOrOAuthDialog);
+if (!customElements.get("sitegeist-api-key-or-oauth-dialog")) {
+	customElements.define("sitegeist-api-key-or-oauth-dialog", ApiKeyOrOAuthDialog);
 }

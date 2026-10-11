@@ -1,11 +1,11 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
-import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html } from "lit";
 import { Toast } from "../components/Toast.js";
 import { getSitegeistStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
 import { getFaviconUrl } from "../utils/favicon.js";
+import { SettingsTab } from "./SettingsDialog.js";
 
 export class SkillsTab extends SettingsTab {
 	label = "Skills";
@@ -389,4 +389,4 @@ export class SkillsTab extends SettingsTab {
 	}
 }
 
-customElements.define("skills-tab", SkillsTab);
+customElements.define("sitegeist-skills-tab", SkillsTab);

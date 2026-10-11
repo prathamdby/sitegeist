@@ -48,6 +48,7 @@ import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
 import { vercelAIGatewayProvider } from "@earendil-works/pi-ai/providers/vercel-ai-gateway";
 import { xaiProvider } from "@earendil-works/pi-ai/providers/xai";
 import { zaiProvider } from "@earendil-works/pi-ai/providers/zai";
+import { type DiscoveryProviderType, discoverModels, discoveryBaseUrl } from "./discovery.js";
 
 export type * from "@earendil-works/pi-ai";
 export { modelsAreEqual, StringEnum } from "@earendil-works/pi-ai";
@@ -157,8 +158,59 @@ export interface CustomModelProvider {
 	models?: readonly Model[];
 }
 
+export type ModelDiscovery = (
+	type: DiscoveryProviderType,
+	baseUrl: string,
+	apiKey?: string,
+) => Promise<readonly Model[]>;
+
+function isDiscoveryProvider(type: string): type is DiscoveryProviderType {
+	return ["ollama", "llama.cpp", "vllm", "lmstudio"].includes(type);
+}
+
+function providerSignature(provider: CustomModelProvider): string {
+	return JSON.stringify([
+		provider.id,
+		provider.name,
+		provider.type,
+		provider.baseUrl,
+		provider.apiKey,
+		provider.models,
+	]);
+}
+
+function configuredModels(provider: CustomModelProvider, models: readonly Model[]): Model[] {
+	if (modelRegistry.getProvider(provider.name) || modelRegistry.getProvider(provider.id)) return [];
+	return models.flatMap((entry): Model[] => {
+		const api = isDiscoveryProvider(provider.type) ? "openai-completions" : entry.api;
+		let baseUrl = entry.baseUrl;
+		if (isDiscoveryProvider(provider.type)) {
+			try {
+				baseUrl = `${discoveryBaseUrl(provider.baseUrl)}/v1`;
+			} catch {
+				return [];
+			}
+		}
+		const validated = savedCustomModel({
+			...entry,
+			provider: provider.name,
+			api,
+			baseUrl,
+			headers: isDiscoveryProvider(provider.type) ? undefined : entry.headers,
+			compat: isDiscoveryProvider(provider.type) ? undefined : entry.compat,
+		});
+		return validated ? [validated] : [];
+	});
+}
+
 export class ModelConfiguration {
-	constructor(private readonly readProviders: () => Promise<readonly CustomModelProvider[]>) {}
+	private discovered = new Map<string, { signature: string; models: readonly Model[] }>();
+	private generation = 0;
+
+	constructor(
+		private readonly readProviders: () => Promise<readonly CustomModelProvider[]>,
+		private readonly discover: ModelDiscovery = discoverModels,
+	) {}
 
 	async getProviders(): Promise<readonly CustomModelProvider[]> {
 		return (await this.readProviders()).filter(
@@ -170,13 +222,57 @@ export class ModelConfiguration {
 		return (await this.getProviders()).find((provider) => provider.id === id || provider.name === id);
 	}
 
+	async getModels(allowedProviders?: readonly string[]): Promise<Model[]> {
+		const generation = ++this.generation;
+		const providers = (await this.getProviders())
+			.filter((provider) => !allowedProviders || allowedProviders.includes(provider.name))
+			.map((provider) => ({ ...provider }));
+		const results = await Promise.all(
+			providers.map(async (provider) => {
+				const signature = providerSignature(provider);
+				try {
+					const models = isDiscoveryProvider(provider.type)
+						? await this.discover(provider.type, provider.baseUrl, provider.apiKey)
+						: (provider.models ?? []);
+					return { provider, signature, models: configuredModels(provider, models) };
+				} catch {
+					return { provider, signature, models: [] };
+				}
+			}),
+		);
+		const current = await this.getProviders();
+		const liveResults = results.filter(({ signature }) =>
+			current.some((live) => providerSignature(live) === signature),
+		);
+		if (generation === this.generation) {
+			for (const [id, cached] of this.discovered) {
+				if (!current.some((provider) => provider.id === id && providerSignature(provider) === cached.signature)) {
+					this.discovered.delete(id);
+				}
+			}
+			for (const { provider, signature, models } of liveResults) {
+				if (isDiscoveryProvider(provider.type)) {
+					this.discovered.set(provider.id, { signature, models });
+				}
+			}
+		}
+		return [
+			...modelRegistry.getModels().filter((model) => !allowedProviders || allowedProviders.includes(model.provider)),
+			...liveResults.flatMap(({ models }) => models),
+		];
+	}
+
 	async resolveModel(saved: unknown): Promise<Model | undefined> {
 		const providers = await this.getProviders();
-		return rehydrateModel(
-			saved,
-			providers.flatMap((provider) => provider.models ?? []),
-			providers,
-		);
+		const customModels = providers.flatMap((provider) => {
+			if (!isDiscoveryProvider(provider.type)) return configuredModels(provider, provider.models ?? []);
+			const cached = this.discovered.get(provider.id);
+			return configuredModels(
+				provider,
+				cached?.signature === providerSignature(provider) ? cached.models : (provider.models ?? []),
+			);
+		});
+		return rehydrateModel(saved, customModels, providers);
 	}
 }
 
@@ -212,13 +308,17 @@ export function rehydrateModel(
 		!isRecord(saved)
 	)
 		return undefined;
-	return savedCustomModel({
-		...saved,
-		api: "openai-completions",
-		baseUrl: `${configured.baseUrl.replace(/\/+$/, "")}/v1`,
-		headers: undefined,
-		compat: undefined,
-	});
+	try {
+		return savedCustomModel({
+			...saved,
+			api: "openai-completions",
+			baseUrl: `${discoveryBaseUrl(configured.baseUrl)}/v1`,
+			headers: undefined,
+			compat: undefined,
+		});
+	} catch {
+		return undefined;
+	}
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
