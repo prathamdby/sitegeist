@@ -17,6 +17,7 @@
 - Bound REPL Stop messages and overlay cleanup to their originating tab and execution, rejecting stale or forged requests.
 - Quoted native-input selectors in debugger error expressions and reported missing browser-script results as execution failures.
 - Enforced read-only artifact access from isolated HTML previews and excluded failed artifact operations from session restoration.
+- Escaped sandbox identifiers in runtime scripts so script-data markers in filenames cannot swallow downloaded HTML documents.
 
 ### Removed
 

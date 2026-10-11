@@ -21,6 +21,7 @@ switch (selection) {
 			"artifacts-runtime.test.mjs",
 			"artifacts-contract.test.mjs",
 			"artifacts-renderer-contract.test.mjs",
+			"artifacts-panel-contract.test.mjs",
 			"artifact-preview-contract.test.mjs",
 			"debug-repl-contract.test.mjs",
 		];

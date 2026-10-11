@@ -473,6 +473,22 @@ test("real HTML isolation rejects writes and exports offline artifact/attachment
 		},
 	);
 	await capture(page, "local-html-isolation");
+	const markedFilename = "report-<!--<script>.html";
+	await command(page, {
+		command: "create",
+		filename: markedFilename,
+		content: "<html><body><h1>Safe script-data name</h1></body></html>",
+	});
+	const markedDownload = page.waitForEvent("download");
+	await page.getByTitle("Download HTML", { exact: true }).click();
+	const markedContent = readFileSync(await (await markedDownload).path(), "utf8");
+	await offline.setContent(markedContent);
+	assert.equal(
+		await offline.getByRole("heading", { name: "Safe script-data name" }).textContent(),
+		"Safe script-data name",
+	);
+	assert.equal(await offline.locator("script").count(), 1);
+	assert.ok(await offline.evaluate(async (filename) => (await listArtifacts()).includes(filename), markedFilename));
 	await offline.close();
 	await page.close();
 });

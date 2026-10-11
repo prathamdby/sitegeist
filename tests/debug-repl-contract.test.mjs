@@ -136,14 +136,36 @@ test("debug output preserves console order, null/object returns and exact UTF-8/
 	assert.equal(result.details.files[0].size, new TextEncoder().encode("hé 文").length);
 	assert.equal(Buffer.from(result.details.files[0].contentBase64, "base64").toString("utf8"), "hé 文");
 	assert.deepEqual([...Buffer.from(result.details.files[1].contentBase64, "base64")], [0, 127, 255]);
-	assert.equal(
-		(
-			await harness({ success: true, console: [], returnValue: null })
-				.createJavaScriptReplTool()
-				.execute("", { title: "Null", code: "" })
-		).content[0].text,
-		"=> null",
-	);
+	for (const [returnValue, expected] of [
+		[null, "=> null"],
+		[0, "=> 0"],
+		[false, "=> false"],
+		["", "=>"],
+	]) {
+		const output = await harness({ success: true, console: [], returnValue })
+			.createJavaScriptReplTool()
+			.execute("", { title: "Value", code: "" });
+		assert.equal(output.content[0].text, expected);
+	}
+});
+
+test("debug returned files round-trip across binary and UTF-8 chunk boundaries", async () => {
+	const binary = Uint8Array.from({ length: 98309 }, (_, index) => index % 251);
+	const text = "x".repeat(32767) + "é文🙂".repeat(9000);
+	const encoded = new TextEncoder().encode(text);
+	const h = harness({
+		success: true,
+		console: [],
+		files: [
+			{ fileName: "large.bin", mimeType: "application/octet-stream", content: binary },
+			{ fileName: "large.txt", mimeType: "text/plain", content: text },
+		],
+	});
+	const output = await h.createJavaScriptReplTool().execute("", { title: "Large files", code: "" });
+	for (const [index, bytes] of [binary, encoded].entries()) {
+		assert.equal(output.details.files[index].size, bytes.byteLength);
+		assert.deepEqual(Buffer.from(output.details.files[index].contentBase64, "base64"), Buffer.from(bytes));
+	}
 });
 
 test("debug failures and abort retain their public text and always remove the sandbox", async () => {

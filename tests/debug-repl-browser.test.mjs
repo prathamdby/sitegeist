@@ -497,3 +497,45 @@ pre { background: white; padding: 16px; border: 1px solid #d8e1ed; border-radius
 		await page.close();
 	},
 );
+
+test(
+	"packaged Chromium CSP blocks SVG handlers while preserving foreignObject content",
+	{ timeout: 60000 },
+	async () => {
+		const page = await debugPage();
+		await page.evaluate(async () => {
+			window.svgHandlerExecuted = false;
+			window.svgScriptExecuted = false;
+			window.svgLinkExecuted = false;
+			window.svgPolicyViolations = [];
+			document.addEventListener("securitypolicyviolation", (event) =>
+				window.svgPolicyViolations.push(event.effectiveDirective),
+			);
+			await chrome.storage.local.set({ svgProbe: "protected" });
+		});
+		const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="100" onload="window.svgHandlerExecuted=true;chrome.storage.local.set({svgProbe:'changed'})">
+<rect width="240" height="100" fill="#4169e1"/><script>window.svgScriptExecuted=true</script>
+<a href="javascript:window.svgLinkExecuted=true"><text x="10" y="20">Script link</text></a>
+<foreignObject x="10" y="40" width="220" height="50"><div xmlns="http://www.w3.org/1999/xhtml">Foreign content preserved</div></foreignObject></svg>`;
+		await page
+			.locator("repl-panel textarea")
+			.fill(`await createOrUpdateArtifact('policy.svg', ${JSON.stringify(svg)}); return 'SVG ready';`);
+		await page.getByRole("button", { name: "Run", exact: true }).click();
+		await page.waitForFunction(() => document.querySelector("repl-panel pre")?.textContent.includes("=> SVG ready"));
+		assert.equal(await page.locator("artifacts-panel foreignObject div").innerText(), "Foreign content preserved");
+		await page.waitForFunction(() =>
+			window.svgPolicyViolations.some((directive) => directive.startsWith("script-src")),
+		);
+		await page.locator("artifacts-panel svg a").click();
+		assert.deepEqual(
+			await page.evaluate(async () => ({
+				handler: window.svgHandlerExecuted,
+				script: window.svgScriptExecuted,
+				link: window.svgLinkExecuted,
+				storage: (await chrome.storage.local.get("svgProbe")).svgProbe,
+			})),
+			{ handler: false, script: false, link: false, storage: "protected" },
+		);
+		await page.close();
+	},
+);

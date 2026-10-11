@@ -136,7 +136,8 @@ export class HtmlArtifactPreview extends HTMLElement {
 			RUNTIME_MESSAGE_ROUTER.setSandboxIframe(sandboxId, iframe);
 			if (this.sandboxUrlProvider) iframe.src = this.sandboxUrlProvider();
 			else iframe.srcdoc = prepared;
-		} catch {
+		} catch (error) {
+			console.error("HTML artifact preview setup failed:", error instanceof Error ? error.message : String(error));
 			this.cleanup();
 		}
 	}
@@ -148,6 +149,7 @@ export class HtmlArtifactPreview extends HTMLElement {
 		options: { isStandalone?: boolean } = {},
 	): string {
 		const online = !options.isStandalone;
+		const sandboxLiteral = JSON.stringify(sandboxId).replace(/</g, "\\u003c");
 		const runtime = providers
 			.map((provider) => {
 				const data = Object.entries(provider.getData())
@@ -156,13 +158,13 @@ export class HtmlArtifactPreview extends HTMLElement {
 							`window[${JSON.stringify(key).replace(/</g, "\\u003c")}] = JSON.parse(${JSON.stringify(JSON.stringify(value)).replace(/</g, "\\u003c")});`,
 					)
 					.join("\n");
-				return `${data}\n(${provider.getRuntime().toString()})(${JSON.stringify(sandboxId)});`;
+				return `${data}\n(${provider.getRuntime().toString()})(${sandboxLiteral});`;
 			})
 			.join("\n");
 		const bridge = online ? RuntimeMessageBridge.generateBridgeCode({ context: "sandbox-iframe", sandboxId }) : "";
-		const navigation = online ? `(${installPreviewNavigation.toString()})(${JSON.stringify(sandboxId)});` : "";
+		const navigation = online ? `(${installPreviewNavigation.toString()})(${sandboxLiteral});` : "";
 		const ready = online
-			? `document.addEventListener("DOMContentLoaded", () => window.parent.postMessage({ channel: "sitegeist-runtime", sandboxId: ${JSON.stringify(sandboxId)}, type: "artifact-ready" }, "*"), { once: true });`
+			? `document.addEventListener("DOMContentLoaded", () => window.parent.postMessage({ channel: "sitegeist-runtime", sandboxId: ${sandboxLiteral}, type: "artifact-ready" }, "*"), { once: true });`
 			: "";
 		const script = `<script>${`${bridge}\n${runtime}\n${navigation}\n${ready}`.replace(/<\/script/gi, "<\\/script")}</script>`;
 		const head = /<head\b[^>]*>/i.exec(html);

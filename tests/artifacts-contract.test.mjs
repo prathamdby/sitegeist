@@ -15,6 +15,10 @@ test("artifacts preserve public tool fields, first-match updates and rejected-op
 		"logs",
 	]);
 	const state = new ArtifactsState();
+	const emptyCreate = state.execute({ command: "create", filename: "empty.txt", content: "" });
+	assert.equal(emptyCreate.isError, true);
+	assert.equal(text(emptyCreate), "Error: create command requires filename and content");
+	assert.equal(state.artifacts.has("empty.txt"), false);
 	assert.equal(
 		text(state.execute({ command: "get", filename: "missing.txt" })),
 		"Error: File missing.txt not found. No files have been created yet.",
@@ -24,6 +28,18 @@ test("artifacts preserve public tool fields, first-match updates and rejected-op
 		"Created file notes.txt",
 	);
 	const createdAt = state.artifacts.get("notes.txt").createdAt;
+	for (const [params, message] of [
+		[{ command: "rewrite", filename: "notes.txt", content: "" }, "Error: rewrite command requires content"],
+		[
+			{ command: "update", filename: "notes.txt", old_str: "", new_str: "x" },
+			"Error: update command requires old_str and new_str",
+		],
+	]) {
+		const result = state.execute(params);
+		assert.equal(result.isError, true);
+		assert.equal(text(result), message);
+		assert.equal(state.artifacts.get("notes.txt").content, "one one");
+	}
 	for (const params of [
 		{ command: "create", filename: "notes.txt", content: "replace" },
 		{ command: "update", filename: "notes.txt", old_str: "absent", new_str: "x" },
@@ -41,6 +57,10 @@ test("artifacts preserve public tool fields, first-match updates and rejected-op
 	assert.equal(state.artifacts.get("notes.txt").createdAt, createdAt);
 	state.execute({ command: "update", filename: "notes.txt", old_str: "two", new_str: "$&/$`/$'/$$" });
 	assert.equal(state.artifacts.get("notes.txt").content, "two// one/$ one");
+	const deletion = state.execute({ command: "update", filename: "notes.txt", old_str: "two", new_str: "" });
+	assert.notEqual(deletion.isError, true);
+	assert.equal(text(deletion), "Updated file notes.txt");
+	assert.equal(state.artifacts.get("notes.txt").content, "// one/$ one");
 	assert.equal(text(state.execute({ command: "rewrite", filename: "notes.txt", content: "new" })), "");
 	assert.equal(text(state.execute({ command: "get", filename: "notes.txt" })), "new");
 	assert.equal(text(state.execute({ command: "delete", filename: "notes.txt" })), "Deleted file notes.txt");

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { build } from "esbuild";
@@ -20,6 +21,7 @@ const bundled = await build({
 function harness() {
 	const frames = [];
 	const opened = [];
+	const errors = [];
 	class Element extends EventTarget {
 		style = {};
 		children = [];
@@ -57,7 +59,7 @@ function harness() {
 		setTimeout,
 		clearTimeout,
 		URL,
-		console,
+		console: { ...console, error: (...args) => errors.push(args) },
 		Event,
 	};
 	runInNewContext(bundled.outputFiles[0].text, context);
@@ -67,8 +69,39 @@ function harness() {
 		Object.assign(event, { data, source });
 		window.dispatchEvent(event);
 	};
-	return { preview, frames, opened, message };
+	return { preview, frames, opened, errors, message };
 }
+
+test("preview setup failures report diagnostics, settle readiness and end every started provider", async () => {
+	const h = harness();
+	let ended = 0;
+	const provider = {
+		getData: () => ({}),
+		getRuntime: () => () => {},
+		getDescription: () => "",
+		onExecutionStart() {
+			throw new Error("setup-probe");
+		},
+		onExecutionEnd() {
+			ended++;
+		},
+	};
+	h.preview.loadContent("setup", "<h1>safe</h1>", [provider]);
+	await h.preview.ready;
+	assert.equal(ended, 1);
+	assert.equal(h.frames[0].removed, true);
+	assert.equal(h.errors[0][0], "HTML artifact preview setup failed:");
+	assert.match(h.errors[0].join(" "), /setup-probe/);
+	h.message({
+		channel: "sitegeist-runtime",
+		sandboxId: "setup",
+		type: "artifact-operation",
+		action: "list",
+		messageId: "late",
+		messageType: "request-response",
+	});
+	assert.deepEqual(h.frames[0].messages, []);
+});
 
 test("HTML preview lifecycle binds only its opaque iframe, then disposes old routing", async () => {
 	const h = harness();
@@ -175,6 +208,41 @@ test("standalone HTML embeds escaped artifact/attachment snapshots without bridg
 	assert.deepEqual(JSON.parse(JSON.stringify(await window.getArtifact("data.json"))), { ok: true });
 	assert.equal(window.readTextAttachment("file"), "hello");
 	await assert.rejects(window.createOrUpdateArtifact("data.json", {}), /read-only/);
+});
+
+test("fragment/root wrappers escape runtime literals without disabling agent-authored scripts", () => {
+	const h = harness();
+	const provider = {
+		getData: () => ({ snapshot: "</ScRiPt><script>window.payloadExecuted=true</script>" }),
+		getRuntime: () => (id) => {
+			window.runtimeId = id;
+			window.literal = "</ScRiPt><script>window.payloadExecuted=true</script>";
+		},
+	};
+	const agentHtml = "<h1>safe</h1><script>window.agentRan=true</script>";
+	for (const html of ["<h1>safe</h1>", "<html><body><h1>safe</h1></body></html>", agentHtml]) {
+		for (const isStandalone of [true, false]) {
+			const id = "artifact-<!--<script></ScRiPt>.html";
+			const content = h.preview.prepareHtmlDocument(id, html, [provider], { isStandalone });
+			assert.match(content, /^<!doctype html><html><head>|^<html><head>/);
+			const source = content.match(/<script>([\s\S]*?)<\/script>/)[1];
+			assert.doesNotMatch(source, /<!--/);
+			assert.match(source, /<\\\/script/i);
+			const window = new EventTarget();
+			window.parent = { postMessage() {} };
+			runInNewContext(source, { window, document: { addEventListener() {} }, setTimeout, clearTimeout });
+			assert.equal(window.payloadExecuted, undefined);
+			assert.equal(window.runtimeId, id);
+			assert.equal(window.snapshot, "</ScRiPt><script>window.payloadExecuted=true</script>");
+			assert.equal(content.match(/<\/script>/gi).length, html === agentHtml ? 2 : 1);
+			if (html === agentHtml) assert.ok(content.endsWith(`${agentHtml}</body></html>`));
+			window.__runtimeBridgeCleanup?.();
+		}
+	}
+	const policy = JSON.parse(
+		readFileSync(new URL("../static/manifest.chrome.json", import.meta.url), "utf8"),
+	).content_security_policy;
+	assert.equal(policy.extension_pages, "script-src 'self'; object-src 'self'");
 });
 
 test("preview navigation rejects forged senders, stale IDs and active URL schemes", () => {
