@@ -551,3 +551,25 @@ test("console runtime reinjection restores root console and prevents stacked int
 	assert.equal(h.window.listeners.get("error").size, 0);
 	assert.equal(h.window.listeners.get("unhandledrejection").size, 0);
 });
+
+test("late callbacks and cleanup from an old console cannot replace the newer runtime", async () => {
+	const h = bridgeHarness();
+	const provider = new ConsoleRuntimeProvider();
+	vm.runInContext(`(${provider.getRuntime().toString()})("frame")`, h.context);
+	const oldCallbacks = [...h.window.__completionCallbacks];
+	const oldCleanup = h.window.__consoleRuntimeCleanup;
+	vm.runInContext(
+		RuntimeMessageBridge.generateBridgeCode({ context: "sandbox-iframe", sandboxId: "new-frame" }),
+		h.context,
+	);
+	vm.runInContext(`(${provider.getRuntime().toString()})("new-frame")`, h.context);
+	await Promise.all(oldCallbacks.map((callback) => callback(false)));
+	oldCleanup();
+	assert.equal(h.messages.at(-1).sandboxId, "frame");
+	vm.runInContext('console.log("new runtime")', h.context);
+	assert.equal(h.messages.at(-1).sandboxId, "new-frame");
+	assert.equal(h.messages.at(-1).type, "console");
+	assert.equal(h.messages.at(-1).text, "new runtime");
+	assert.equal(h.window.listeners.get("error").size, 1);
+	await h.complete();
+});

@@ -183,12 +183,16 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 		if (message.type !== "native-input") {
 			return;
 		}
+		const signal = this.executionSignals.get(message.sandboxId);
+		signal?.throwIfAborted();
+		if ((message.action === "click" || message.action === "type") && typeof message.selector !== "string") {
+			respond({ success: false, error: "Selector must be a string" });
+			return;
+		}
 
 		console.log("[NativeInput] Received event:", message.action, message);
 
 		// Get active tab ID once at the start
-		const signal = this.executionSignals.get(message.sandboxId);
-		signal?.throwIfAborted();
 		const tabId = typeof message.runtimeTabId === "number" ? message.runtimeTabId : await this.getActiveTabId();
 		const sendCommand = async (method: string, params: Record<string, unknown>, release = false) => {
 			if (!release) signal?.throwIfAborted();
@@ -224,7 +228,7 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 				const result = (await sendCommand("Runtime.evaluate", {
 					expression: `(() => {
 							const el = document.querySelector(${JSON.stringify(message.selector)});
-							if (!el) throw new Error('Selector not found: ${message.selector}');
+							if (!el) throw new Error(${JSON.stringify(`Selector not found: ${message.selector}`)});
 							const rect = el.getBoundingClientRect();
 							return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
 						})()`,
@@ -274,7 +278,7 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 				const focusResult = (await sendCommand("Runtime.evaluate", {
 					expression: `(() => {
 							const el = document.querySelector(${JSON.stringify(message.selector)});
-							if (!el) throw new Error('Selector not found: ${message.selector}');
+							if (!el) throw new Error(${JSON.stringify(`Selector not found: ${message.selector}`)});
 							el.focus();
 							return true;
 						})()`,

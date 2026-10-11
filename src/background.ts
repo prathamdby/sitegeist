@@ -1,3 +1,4 @@
+import { relayOverlayAbortMessage } from "./tools/repl/overlay-abort.js";
 import type { LockedSessionsMessage, LockResultMessage, SidepanelToBackgroundMessage } from "./utils/port.js";
 
 // Called when Sitegeist icon is clicked - opens sidepanel for current tab
@@ -12,11 +13,12 @@ chrome.action.onClicked.addListener((tab: chrome.tabs.Tab) => {
 console.log("[Background] onUserScriptMessage available:", !!chrome.runtime.onUserScriptMessage);
 if (chrome.runtime.onUserScriptMessage) {
 	chrome.runtime.onUserScriptMessage.addListener((message, sender, sendResponse) => {
-		console.log("[Background] Received userScript message:", message, "from:", sender);
-		if (message.type === "abort-repl") {
+		console.log("[Background] Received userScript message type:", message?.type, "from tab:", sender.tab?.id);
+		const abortMessage = relayOverlayAbortMessage(message, sender);
+		if (abortMessage) {
 			// Forward to all open sidepanels (they'll check if they're streaming)
 			console.log("[Background] Relaying abort-repl to sidepanels");
-			chrome.runtime.sendMessage(message);
+			void chrome.runtime.sendMessage(abortMessage).catch(() => {});
 			sendResponse({ success: true });
 			return true;
 		}

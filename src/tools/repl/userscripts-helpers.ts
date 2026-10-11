@@ -162,13 +162,20 @@ async function wrapperFunction() {
 
 	// Injection marker (survives .toString())
 	("__INJECT_PROVIDERS_HERE__");
+	const runtime = window as Window & {
+		__completionCallbacks?: Array<(success: boolean) => Promise<void> | void>;
+		__consoleRuntimeCleanup?: () => void;
+		__runtimeBridgeCleanup?: () => void;
+	};
+	const callbacks = runtime.__completionCallbacks ?? [];
+	const consoleCleanup = runtime.__consoleRuntimeCleanup;
+	const bridgeCleanup = runtime.__runtimeBridgeCleanup;
 
 	const cleanup = () => {
 		if (timeoutId) clearTimeout(timeoutId);
 		if (completionTimeoutId !== undefined) clearTimeout(completionTimeoutId);
-		const runtime = window as Window & { __consoleRuntimeCleanup?: () => void; __runtimeBridgeCleanup?: () => void };
-		runtime.__consoleRuntimeCleanup?.();
-		runtime.__runtimeBridgeCleanup?.();
+		consoleCleanup?.();
+		bridgeCleanup?.();
 	};
 
 	try {
@@ -189,16 +196,10 @@ async function wrapperFunction() {
 		const lastValue = await Promise.race([codePromise, timeoutPromise]);
 
 		// Call completion callbacks before returning (success path)
-		if (
-			// @ts-expect-error
-			window.__completionCallbacks &&
-			// @ts-expect-error
-			window.__completionCallbacks.length > 0
-		) {
+		if (callbacks.length > 0) {
 			try {
 				await Promise.race([
-					// @ts-expect-error
-					Promise.all(window.__completionCallbacks.map((cb) => cb(true))),
+					Promise.all(callbacks.map((cb) => cb(true))),
 					new Promise((_, reject) => {
 						completionTimeoutId = setTimeout(() => reject(new Error("Completion timeout")), 5000);
 					}),
@@ -215,16 +216,10 @@ async function wrapperFunction() {
 		};
 	} catch (error: any) {
 		// Call completion callbacks before returning (error path)
-		if (
-			// @ts-expect-error
-			window.__completionCallbacks &&
-			// @ts-expect-error
-			window.__completionCallbacks.length > 0
-		) {
+		if (callbacks.length > 0) {
 			try {
 				await Promise.race([
-					// @ts-expect-error
-					Promise.all(window.__completionCallbacks.map((cb) => cb(false))),
+					Promise.all(callbacks.map((cb) => cb(false))),
 					new Promise((_, reject) => {
 						completionTimeoutId = setTimeout(() => reject(new Error("Completion timeout")), 5000);
 					}),

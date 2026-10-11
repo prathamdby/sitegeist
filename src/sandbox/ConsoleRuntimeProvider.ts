@@ -36,12 +36,13 @@ export class ConsoleRuntimeProvider implements SandboxRuntimeProvider {
 				info: console.info.bind(console),
 			};
 			target.__originalConsole = original;
+			const sendRuntimeMessage = target.sendRuntimeMessage;
 			let finished = false;
 			let completionError: { message: string; stack: string } | undefined;
 			const [send] = [
 				async (message: RuntimeMessage) => {
 					try {
-						await target.sendRuntimeMessage?.(message, "fire-and-forget");
+						await sendRuntimeMessage?.(message, "fire-and-forget");
 					} catch {}
 				},
 			];
@@ -91,7 +92,7 @@ export class ConsoleRuntimeProvider implements SandboxRuntimeProvider {
 					cleaned = true;
 					window.removeEventListener("error", onError);
 					window.removeEventListener("unhandledrejection", onRejection);
-					Object.assign(console, original);
+					if (target.__consoleRuntimeCleanup === cleanup) Object.assign(console, original);
 				},
 			];
 			target.__consoleRuntimeCleanup = cleanup;

@@ -349,6 +349,60 @@ test("wrapper async arguments/skills and completion cleanup work on success and 
 	}
 });
 
+test("a late user-script wrapper runs only its own completion callbacks and cleanup", async () => {
+	harness();
+	const timers = new Set();
+	const window = Object.assign(new EventTarget(), { oldCompleted: 0, newCompleted: 0, newCleaned: 0 });
+	const wrapper = buildWrapperCode(
+		"async () => { onCompleted(() => { window.oldCompleted++; }); await new Promise(resolve => { window.finishOld = resolve; }); return 1; }",
+		"",
+		false,
+		[],
+		"old-wrapper",
+		[],
+		{ transport: "user-script", tabId: 7, frameId: 0, worldId },
+	);
+	const pending = runInNewContext(wrapper, {
+		__name: (fn) => fn,
+		window,
+		console: { error() {} },
+		onCompleted: (callback) => window.onCompleted(callback),
+		setTimeout(callback, delay) {
+			const timer = setTimeout(callback, delay);
+			timers.add(timer);
+			return timer;
+		},
+		clearTimeout(timer) {
+			timers.delete(timer);
+			clearTimeout(timer);
+		},
+	});
+	try {
+		window.__completionCallbacks = [
+			() => {
+				window.newCompleted++;
+			},
+		];
+		window.__consoleRuntimeCleanup = () => {
+			window.newCleaned++;
+		};
+		window.__runtimeBridgeCleanup = () => {
+			window.newCleaned++;
+		};
+		window.finishOld();
+		const result = await pending;
+		assert.equal(result.success, true);
+		assert.equal(result.lastValue, 1);
+		assert.equal(window.oldCompleted, 1);
+		assert.equal(window.newCompleted, 0);
+		assert.equal(window.newCleaned, 0);
+		assert.equal(timers.size, 0);
+	} finally {
+		for (const timer of timers) clearTimeout(timer);
+		RUNTIME_MESSAGE_ROUTER.unregisterSandbox("old-wrapper");
+	}
+});
+
 test("bridge rejects failed requests by default but opt-out retains error console payloads", async () => {
 	const window = new EventTarget();
 	const timers = new Set();
@@ -435,6 +489,21 @@ test("the retained no-execute fallback returns an actionable error and cleans ro
 	assert.match(call.responses[0].error, /Firefox is currently not supported/);
 	assert.equal(h.onUserScriptMessage.listeners.size, 0);
 	assert.equal(h.onActivated.listeners.size, 0);
+});
+
+test("missing Chrome execution results fail instead of returning undefined successfully", async () => {
+	for (const results of [[], [{ frameId: 0 }]]) {
+		const h = harness({ execute: async () => results });
+		const provider = new BrowserJsRuntimeProvider([]);
+		const call = browserCall(provider);
+		await call.done;
+		assert.deepEqual(call.responses, [
+			{ success: false, error: "No result returned from script execution", console: [] },
+		]);
+		assert.equal(h.onUserScriptMessage.listeners.size, 0);
+		assert.equal(h.onActivated.listeners.size, 0);
+		assert.equal(h.onRemoved.listeners.size, 0);
+	}
 });
 
 test(
@@ -583,6 +652,24 @@ test(
 				{ type: "click", trusted: true },
 				...Array.from("trusted text", () => ({ type: "input", trusted: true })),
 			]);
+			const selector = `[data-missing="' + (window.selectorInjected = true) + '"]`;
+			assert.equal(await target.evaluate((value) => document.querySelector(value) === null, selector), true);
+			assert.equal(await target.evaluate(() => Object.hasOwn(window, "selectorInjected")), false);
+			for (const helper of ["nativeClick", "nativeType"]) {
+				await page.evaluate(
+					({ helper, selector }) =>
+						window.sandboxRuntimeFixture.begin(
+							`await browserjs(async selector => { await ${helper}(selector${helper === "nativeType" ? ", 'ignored'" : ""}); }, ${JSON.stringify(selector)});`,
+						),
+					{ helper, selector },
+				);
+				const rejected = await page.evaluate(() => window.sandboxRuntimeFixture.result());
+				assert.equal(rejected.success, false, helper);
+				assert.match(rejected.error.message, /Selector not found/);
+				assert.ok(rejected.error.message.includes(selector), rejected.error.message);
+				assert.equal(await target.evaluate(() => Object.hasOwn(window, "selectorInjected")), false, helper);
+				assert.equal(await target.evaluate(() => window.selectorInjected), undefined, helper);
+			}
 			await page.evaluate(() =>
 				window.sandboxRuntimeFixture.begin(
 					`await browserjs(async () => { console.error('page error fixture'); throw new Error('page exception'); });`,
@@ -599,6 +686,8 @@ test(
 				),
 			);
 			await target.locator('body[data-pending-browser-script="overlay"]').waitFor();
+			await target.evaluate(() => document.querySelector("#sitegeist-repl-overlay button").click());
+			assert.equal(await target.locator("#sitegeist-repl-overlay").count(), 1);
 			if (process.env.SITEGEIST_SANDBOX_EVIDENCE) {
 				mkdirSync(process.env.SITEGEIST_SANDBOX_EVIDENCE, { recursive: true });
 				await target.screenshot({ path: join(process.env.SITEGEIST_SANDBOX_EVIDENCE, "overlay-abort.png") });

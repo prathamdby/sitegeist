@@ -256,7 +256,7 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 
 				if (!result) {
 					respond({
-						success: true,
+						success: false,
 						error: "No result returned from script execution",
 						console: consoleLogs,
 					});

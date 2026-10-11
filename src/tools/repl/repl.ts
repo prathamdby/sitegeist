@@ -59,9 +59,12 @@ export async function executeJavaScript(
 	// Only inject overlay if code uses browserjs() (interacts with active tab)
 	const usesBrowserjs = code.includes("browserjs(");
 	let overlayTabId: number | undefined;
+	let overlayRequestId: string | undefined;
 	if (usesBrowserjs) {
 		try {
-			overlayTabId = await injectOverlayForActiveTab(taskName || "Executing JavaScript");
+			const overlay = await injectOverlayForActiveTab(taskName || "Executing JavaScript");
+			overlayTabId = overlay.tabId;
+			overlayRequestId = overlay.requestId;
 		} catch (error) {
 			console.warn("[REPL] Failed to inject overlay:", error);
 			// Continue execution even if overlay fails
@@ -125,8 +128,8 @@ export async function executeJavaScript(
 		}
 
 		// Remove overlay on success (if it was injected)
-		if (overlayTabId !== undefined) {
-			await removeOverlay(overlayTabId);
+		if (overlayTabId !== undefined && overlayRequestId !== undefined) {
+			await removeOverlay(overlayTabId, overlayRequestId);
 		}
 
 		return {
@@ -136,8 +139,8 @@ export async function executeJavaScript(
 	} catch (error: unknown) {
 		// Clean up on error
 		sandbox.remove();
-		if (overlayTabId !== undefined) {
-			await removeOverlay(overlayTabId);
+		if (overlayTabId !== undefined && overlayRequestId !== undefined) {
+			await removeOverlay(overlayTabId, overlayRequestId);
 		}
 		throw new Error((error as Error).message || "Execution failed");
 	}

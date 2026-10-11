@@ -1,3 +1,4 @@
+import { createOverlayAbortRequest, removeOverlayAbortRequest } from "./overlay-abort.js";
 import { createOverlayScript, removeOverlayScript } from "./overlay-content.js";
 
 const OVERLAY_WORLD_ID = "sitegeist-repl-overlay";
@@ -25,7 +26,8 @@ async function getActiveTabId(): Promise<number> {
  * @param tabId - ID of the tab to inject into
  * @param taskName - Name of the task being executed (shown in overlay)
  */
-export async function injectOverlay(tabId: number, taskName: string): Promise<void> {
+export async function injectOverlay(tabId: number, taskName: string): Promise<string | undefined> {
+	let requestId: string | undefined;
 	try {
 		// Check if tab is a restricted URL
 		const tab = await chrome.tabs.get(tabId);
@@ -54,8 +56,10 @@ export async function injectOverlay(tabId: number, taskName: string): Promise<vo
 			}
 
 			// Inject overlay script
+			const abortRequest = createOverlayAbortRequest(tabId, tab.windowId);
+			requestId = abortRequest.requestId;
 			await chrome.userScripts.execute({
-				js: [{ code: createOverlayScript(taskName) }],
+				js: [{ code: createOverlayScript(taskName, abortRequest) }],
 				target: { tabId, allFrames: false },
 				world: "USER_SCRIPT",
 				worldId: OVERLAY_WORLD_ID,
@@ -63,10 +67,12 @@ export async function injectOverlay(tabId: number, taskName: string): Promise<vo
 			});
 
 			console.log("[Overlay] Injected overlay into tab", tabId);
+			return requestId;
 		} else {
 			console.warn("[Overlay] userScripts API not available");
 		}
 	} catch (error) {
+		if (requestId !== undefined) await removeOverlay(tabId, requestId);
 		// Don't fail the REPL if overlay injection fails
 		console.warn("[Overlay] Failed to inject overlay:", error);
 	}
@@ -76,11 +82,12 @@ export async function injectOverlay(tabId: number, taskName: string): Promise<vo
  * Remove the REPL overlay from the active tab.
  * @param tabId - ID of the tab to remove overlay from
  */
-export async function removeOverlay(tabId: number): Promise<void> {
+export async function removeOverlay(tabId: number, requestId?: string): Promise<void> {
+	if (!removeOverlayAbortRequest(tabId, requestId)) return;
 	try {
 		if (chrome.userScripts && typeof chrome.userScripts.execute === "function") {
 			await chrome.userScripts.execute({
-				js: [{ code: removeOverlayScript() }],
+				js: [{ code: removeOverlayScript(requestId) }],
 				target: { tabId, allFrames: false },
 				world: "USER_SCRIPT",
 				worldId: OVERLAY_WORLD_ID,
@@ -101,10 +108,10 @@ export async function removeOverlay(tabId: number): Promise<void> {
  * @param taskName - Name of the task being executed
  * @returns Tab ID where overlay was injected
  */
-export async function injectOverlayForActiveTab(taskName: string): Promise<number> {
+export async function injectOverlayForActiveTab(taskName: string): Promise<{ tabId: number; requestId?: string }> {
 	const tabId = await getActiveTabId();
-	await injectOverlay(tabId, taskName);
-	return tabId;
+	const requestId = await injectOverlay(tabId, taskName);
+	return { tabId, requestId };
 }
 
 /**

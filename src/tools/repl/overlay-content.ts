@@ -2,17 +2,23 @@
  * This code gets stringified and injected into the page context.
  * Creates a full-viewport overlay with shimmer effect and abort button.
  */
-export function createOverlayScript(taskName: string): string {
+import type { OverlayAbortRequest } from "./overlay-abort.js";
+
+export function createOverlayScript(taskName: string, abortRequest: OverlayAbortRequest): string {
 	return `
 (function() {
+	const abortRequest = ${JSON.stringify(abortRequest)};
 	// Check if overlay already exists (prevent duplicates)
-	if (document.getElementById('sitegeist-repl-overlay')) {
+	const previousOverlay = document.getElementById('sitegeist-repl-overlay');
+	if (previousOverlay?.dataset.sitegeistRequestId === ${JSON.stringify(abortRequest.requestId)}) {
 		return;
 	}
+	previousOverlay?.remove();
 
 	// Create overlay container
 	const overlay = document.createElement('div');
 	overlay.id = 'sitegeist-repl-overlay';
+	overlay.dataset.sitegeistRequestId = ${JSON.stringify(abortRequest.requestId)};
 	overlay.style.cssText = \`
 		position: fixed;
 		top: 0;
@@ -236,7 +242,8 @@ export function createOverlayScript(taskName: string): string {
 	abortBtn.onmouseout = () => {
 		abortBtn.style.background = 'rgba(239, 68, 68, 0.9)';
 	};
-	abortBtn.onclick = async () => {
+	abortBtn.onclick = async (event) => {
+		if (!(event instanceof Event) || !event.isTrusted || event.currentTarget !== abortBtn) return;
 		console.log('[Overlay] Stop button clicked');
 		console.log('[Overlay] chrome.runtime:', chrome.runtime);
 		console.log('[Overlay] chrome.runtime.sendMessage:', chrome.runtime.sendMessage);
@@ -245,7 +252,7 @@ export function createOverlayScript(taskName: string): string {
 		// Send message BEFORE removing overlay
 		try {
 			console.log('[Overlay] Calling sendMessage...');
-			const response = await chrome.runtime.sendMessage({ type: 'abort-repl' });
+			const response = await chrome.runtime.sendMessage(abortRequest);
 			console.log('[Overlay] Got response:', response);
 		} catch (error) {
 			console.error('[Overlay] sendMessage failed:', error);
@@ -340,11 +347,11 @@ export function createOverlayScript(taskName: string): string {
 /**
  * Code to remove the overlay from the page.
  */
-export function removeOverlayScript(): string {
+export function removeOverlayScript(requestId?: string): string {
 	return `
 (function() {
 	const overlay = document.getElementById('sitegeist-repl-overlay');
-	if (overlay) {
+	if (overlay && (${JSON.stringify(requestId)} === undefined || overlay.dataset.sitegeistRequestId === ${JSON.stringify(requestId)})) {
 		overlay.remove();
 	}
 })();

@@ -11,6 +11,11 @@
 - Replaced attachment processing, previews, REPL file access and document extraction with local implementations, preserving upload flows, parser formats and saved attachment bytes.
 - Replaced production REPL and skill sandbox execution with a local runtime bridge, preserving browser helpers, attachment reads, cancellation and extension CSP.
 
+### Fixed
+
+- Bound REPL Stop messages and overlay cleanup to their originating tab and execution, rejecting stale or forged requests.
+- Quoted native-input selectors in debugger error expressions and reported missing browser-script results as execution failures.
+
 ### Removed
 
 - Removed the marketing site, site-specific development and deployment tooling, and website-backed extension update links.
