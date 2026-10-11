@@ -4,7 +4,6 @@ import {
 	type AgentState,
 	type AgentTool,
 	Agent as PiAgent,
-	type StreamFn,
 	type ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
 import {
@@ -14,9 +13,9 @@ import {
 	type Model,
 	toToolDeclaration,
 } from "@earendil-works/pi-ai";
-import type { ArtifactMessage, UserMessageWithAttachments } from "@mariozechner/pi-web-ui";
 import type { TSchema } from "typebox";
 import { Compile } from "typebox/compile";
+import type { ArtifactMessage, UserMessageWithAttachments } from "../chat/types.js";
 
 export type * from "@earendil-works/pi-agent-core";
 
@@ -40,13 +39,13 @@ declare module "@earendil-works/pi-agent-core" {
 }
 
 export class Agent extends PiAgent {
-	private readonly legacyState: AgentState;
+	private readonly presentationState: AgentState;
 	private turnEnded = false;
 	onModelRequired?: () => void;
 
 	constructor(options: AgentOptions) {
 		super(options);
-		this.legacyState = new Proxy(super.state, {
+		this.presentationState = new Proxy(super.state, {
 			get: (state, property, receiver) =>
 				property === "isStreaming" ? state.isStreaming && !this.turnEnded : Reflect.get(state, property, receiver),
 		});
@@ -58,7 +57,7 @@ export class Agent extends PiAgent {
 	}
 
 	override get state(): AgentState {
-		return this.legacyState;
+		return this.presentationState;
 	}
 
 	override async prompt(input: string | AgentMessage | AgentMessage[], images?: ImageContent[]): Promise<void> {
@@ -76,14 +75,6 @@ export class Agent extends PiAgent {
 			return;
 		}
 		return super.continue();
-	}
-
-	get streamFn(): StreamFn {
-		return this.streamFunction;
-	}
-
-	set streamFn(stream: StreamFn) {
-		this.streamFunction = stream;
 	}
 
 	setModel(model: Model<Api>): void {

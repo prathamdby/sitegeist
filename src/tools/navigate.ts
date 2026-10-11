@@ -1,8 +1,8 @@
 import { i18n, icon } from "@mariozechner/mini-lit";
-import { registerToolRenderer, type ToolRenderer, type ToolRenderResult } from "@mariozechner/pi-web-ui";
 import { html } from "lit";
 import { Loader2 } from "lucide";
 import { type Static, Type } from "typebox";
+import { registerToolRenderer, type ToolRenderer, type ToolRenderResult } from "../chat/renderers/index.js";
 import { SkillPill } from "../components/SkillPill.js";
 import { TabPill } from "../components/TabPill.js";
 import type { AgentTool } from "../pi/agent.js";

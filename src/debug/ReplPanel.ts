@@ -1,6 +1,8 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { icon } from "@mariozechner/mini-lit/dist/icons.js";
-import { ArtifactsPanel, ArtifactsRuntimeProvider, createJavaScriptReplTool } from "@mariozechner/pi-web-ui";
+import { ArtifactsRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/ArtifactsRuntimeProvider.js";
+import { ArtifactsPanel } from "@mariozechner/pi-web-ui/dist/tools/artifacts/artifacts.js";
+import { createJavaScriptReplTool } from "@mariozechner/pi-web-ui/dist/tools/javascript-repl.js";
 import { html, LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { Play, Square } from "lucide";

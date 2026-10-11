@@ -1,7 +1,7 @@
-import type { MessageRenderer } from "@mariozechner/pi-web-ui";
-import { registerMessageRenderer } from "@mariozechner/pi-web-ui";
 import { html, LitElement, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import type { MessageRenderer } from "../chat/renderers/index.js";
+import { registerMessageRenderer } from "../chat/renderers/index.js";
 import { SkillPill } from "../components/SkillPill.js";
 import { getSitegeistStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";

@@ -7,6 +7,7 @@
 - Migrated the agent runtime and model/auth registry to `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` 1.1.0, retaining the existing UI and stored data formats.
 - Replaced the web-ui storage implementation with application-owned persistence while retaining the version-3 database and rollback-compatible records.
 - Replaced the model selector and settings shell with local components, retaining provider filtering, browser OAuth and custom model discovery; exposed OpenCode API key entry.
+- Replaced the chat shell, composer and message/tool rendering with local components driven by Pi 1.1.0, retaining attachment and artifact services and sequential navigation steering behavior.
 
 ### Removed
 
