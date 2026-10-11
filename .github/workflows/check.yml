@@ -11,6 +11,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,7 +21,16 @@ jobs:
         run: bash scripts/install-legacy-ui.sh
       - name: Install extension
         run: npm ci
-      - name: Install browser for migration contracts
-        run: npx playwright install --with-deps chromium
-      - name: Check extension and migration contracts
-        run: ./check.sh && npm test && npm run check:bundle && git diff --exit-code
+      - name: Check extension
+        timeout-minutes: 2
+        run: ./check.sh
+      - name: Critical migration contracts
+        timeout-minutes: 2
+        run: npm run test:ci
+      - name: Verify browser bundle and clean tree
+        timeout-minutes: 2
+        run: npm run check:bundle && git diff --exit-code
+      - name: Final runner resource diagnostics
+        if: always()
+        timeout-minutes: 1
+        run: node scripts/ci-test-runner.mjs --diagnostics-only

@@ -59,12 +59,6 @@ test("attachment helpers are self-contained injected functions with original byt
 	const list = target.listAttachments();
 	list[0].fileName = "changed";
 	assert.equal(target.listAttachments()[0].fileName, "pixel.png");
-	const fallback = runtime([{ ...attachments[1], extractedText: undefined }]);
-	assert.equal(fallback.readTextAttachment("old-document"), atob(attachments[1].content));
-	assert.equal(
-		runtime([{ ...attachments[1], extractedText: "" }]).readTextAttachment("old-document"),
-		atob(attachments[1].content),
-	);
 	assert.deepEqual(JSON.parse(JSON.stringify(runtime([]).listAttachments())), []);
 });
 

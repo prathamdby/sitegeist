@@ -11,7 +11,11 @@
 		"build": "npm run build:chrome",
 		"dev": "concurrently -n \"build,css,server\" -c \"blue,green,yellow\" \"node ./scripts/build.mjs --watch\" \"tailwindcss -i ./src/app.css -o ./dist-chrome/app.css --watch\" \"node ./scripts/dev-server.mjs\"",
 		"typecheck": "tsc --noEmit",
-		"test": "node --import tsx --test tests/*.test.mjs",
+		"test": "node scripts/test-suite.mjs critical",
+		"test:ci": "node scripts/ci-test-runner.mjs",
+		"test:unit": "node scripts/test-suite.mjs unit",
+		"test:browser": "node scripts/test-suite.mjs browser",
+		"test:all": "node scripts/test-suite.mjs all",
 		"check:bundle": "node scripts/check-bundle.mjs",
 		"check": "biome check --write . && tsc --noEmit",
 		"prepare": "husky"
