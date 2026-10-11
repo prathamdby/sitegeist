@@ -3,7 +3,7 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { build } from "esbuild";
 
-test("panel logs preserves missing-file, non-HTML and empty-console contracts without rendering", async () => {
+async function createPanel() {
 	const bundled = await build({
 		entryPoints: ["src/artifacts/ArtifactsPanel.ts"],
 		bundle: true,
@@ -47,7 +47,63 @@ test("panel logs preserves missing-file, non-HTML and empty-console contracts wi
 		document: { createTreeWalker: () => ({}) },
 		localStorage: { getItem: () => "en" },
 	});
-	const panel = new module.exports.ArtifactsPanel();
+	return new module.exports.ArtifactsPanel();
+}
+
+test(
+	"detached restoration resolves synchronously restored state without waiting for rendering",
+	{ timeout: 2000 },
+	async () => {
+		const panel = await createPanel();
+		let renderReads = 0;
+		let changes = 0;
+		Object.defineProperty(panel, "isConnected", { value: false });
+		Object.defineProperty(panel, "updateComplete", {
+			get() {
+				renderReads++;
+				return new Promise(() => {});
+			},
+		});
+		panel.onArtifactsChange = () => changes++;
+		await panel.reconstructFromMessages([]);
+		const restoring = panel.reconstructFromMessages([
+			{
+				role: "artifact",
+				action: "create",
+				filename: "saved.md",
+				content: "# Saved artifact",
+				timestamp: "2026-10-11T00:00:00.000Z",
+			},
+		]);
+		assert.equal(panel.artifacts.get("saved.md").content, "# Saved artifact");
+		assert.equal(changes, 2);
+		assert.equal(renderReads, 0);
+		await restoring;
+	},
+);
+
+test("connected restoration still waits for rendering", async () => {
+	const panel = await createPanel();
+	let finishRender;
+	let restored = false;
+	Object.defineProperty(panel, "isConnected", { value: true });
+	Object.defineProperty(panel, "updateComplete", {
+		value: new Promise((resolve) => {
+			finishRender = resolve;
+		}),
+	});
+	const restoring = panel.reconstructFromMessages([]).then(() => {
+		restored = true;
+	});
+	await Promise.resolve();
+	assert.equal(restored, false);
+	finishRender();
+	await restoring;
+	assert.equal(restored, true);
+});
+
+test("panel logs preserves missing-file, non-HTML and empty-console contracts without rendering", async () => {
+	const panel = await createPanel();
 	Object.defineProperty(panel, "updateComplete", { value: Promise.resolve() });
 	const missing = await panel.tool.execute("", { command: "logs", filename: "missing.html" });
 	assert.equal(missing.isError, true);

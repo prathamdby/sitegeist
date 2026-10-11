@@ -556,6 +556,53 @@ test("attachment limits skip oversized and unsupported files while accepting lat
 	}
 });
 
+test("detached chat initialization resolves before attachment and renders stored artifacts collapsed", async () => {
+	const page = await fixture();
+	try {
+		const restored = await page.evaluate(async () => {
+			const { agent, panel: previous } = window.chatFixture;
+			agent.appendMessage({
+				role: "artifact",
+				action: "create",
+				filename: "startup.md",
+				content: "# Saved startup artifact",
+				timestamp: "2026-10-11T00:00:00.000Z",
+			});
+			const panel = new previous.constructor();
+			await panel.setAgent(agent, { toolsFactory: () => [] });
+			const state = {
+				connected: panel.isConnected,
+				artifactsConnected: panel.artifactsPanel.isConnected,
+				content: panel.artifactsPanel.artifacts.get("startup.md").content,
+			};
+			previous.remove();
+			window.chatFixture.panel = panel;
+			document.body.append(panel);
+			await panel.updateComplete;
+			await panel.artifactsPanel.updateComplete;
+			return state;
+		});
+		assert.deepEqual(restored, {
+			connected: false,
+			artifactsConnected: false,
+			content: "# Saved startup artifact",
+		});
+		const artifacts = page.locator("artifacts-panel");
+		assert.equal(await page.evaluate(() => window.chatFixture.panel.artifactsPanel.collapsed), true);
+		assert.equal(await artifacts.getByRole("button", { name: "startup.md", includeHidden: true }).count(), 1);
+		assert.equal(await artifacts.getByRole("button", { name: "startup.md" }).isHidden(), true);
+		if (process.env.CHAT_RENDER_DIR) {
+			mkdirSync(process.env.CHAT_RENDER_DIR, { recursive: true });
+			await page.screenshot({ path: join(process.env.CHAT_RENDER_DIR, "detached-startup-collapsed.png") });
+		}
+		await page.getByTitle("Show artifacts").click();
+		await artifacts.getByRole("heading", { name: "Saved startup artifact" }).waitFor();
+		assert.equal(await artifacts.getByRole("button", { name: "startup.md" }).isVisible(), true);
+	} finally {
+		await page.close();
+	}
+});
+
 test("artifacts auto-open, close to the centered count pill and resize at 800px", async () => {
 	const page = await fixture();
 	try {
