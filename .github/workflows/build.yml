@@ -24,9 +24,6 @@ jobs:
       - name: Install sitegeist
         run: npm ci
 
-      - name: Install browser for migration contracts
-        run: npx playwright install --with-deps chromium
-
       - name: Check extension
         run: ./check.sh && npm test && npm run check:bundle
 
