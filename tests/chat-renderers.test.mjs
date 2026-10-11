@@ -8,6 +8,7 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { build } from "esbuild";
+import { attachmentBridge } from "../scripts/chat-bridge.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 let browser;
@@ -27,6 +28,7 @@ before(async () => {
 		platform: "browser",
 		format: "esm",
 		plugins: [
+			attachmentBridge(root),
 			{
 				name: "renderer-fixture-sidepanel",
 				setup(build) {
@@ -52,7 +54,7 @@ before(async () => {
 			lit: `${root}node_modules/lit`,
 			"@mariozechner/pi-web-ui/dist/components/MessageList.js": `${root}node_modules/@mariozechner/pi-web-ui/dist/components/MessageList.js`,
 			"@mariozechner/pi-web-ui/dist/components/Messages.js": `${root}node_modules/@mariozechner/pi-web-ui/dist/components/Messages.js`,
-			"@mariozechner/pi-web-ui/dist/components/AttachmentTile.js": `${root}node_modules/@mariozechner/pi-web-ui/dist/components/AttachmentTile.js`,
+			"@mariozechner/pi-web-ui/dist/components/AttachmentTile.js": `${root}src/attachments/AttachmentTile.ts`,
 		},
 	});
 	server = createServer((request, response) => {

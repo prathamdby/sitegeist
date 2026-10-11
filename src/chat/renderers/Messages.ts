@@ -7,7 +7,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
 import "@mariozechner/mini-lit/dist/CodeBlock.js";
-import "@mariozechner/pi-web-ui/dist/components/AttachmentTile.js";
+import "../../attachments/AttachmentTile.js";
 import { i18n } from "@mariozechner/mini-lit";
 import { html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";

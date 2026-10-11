@@ -1,9 +1,9 @@
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ToolResultMessage, Usage } from "@earendil-works/pi-ai";
-import type { Attachment } from "@mariozechner/pi-web-ui/dist/utils/attachment-utils.js";
 import { html, LitElement } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { createRef, ref } from "lit/directives/ref.js";
+import type { Attachment } from "../attachments/types.js";
 import type { Agent } from "../pi/agent.js";
 import { getAppStorage } from "../storage/app-storage.js";
 import { formatUsage } from "./format.js";

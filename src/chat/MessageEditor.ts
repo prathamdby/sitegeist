@@ -3,12 +3,13 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { i18n, icon } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Select } from "@mariozechner/mini-lit/dist/Select.js";
-import "@mariozechner/pi-web-ui/dist/components/AttachmentTile.js";
-import { type Attachment, loadAttachment } from "@mariozechner/pi-web-ui/dist/utils/attachment-utils.js";
+import "../attachments/AttachmentTile.js";
 import { html, LitElement } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { createRef, ref } from "lit/directives/ref.js";
 import { Brain, Loader2, Paperclip, Send, Sparkles, Square } from "lucide";
+import { loadAttachment } from "../attachments/processing.js";
+import type { Attachment } from "../attachments/types.js";
 
 @customElement("sitegeist-message-editor")
 export class MessageEditor extends LitElement {

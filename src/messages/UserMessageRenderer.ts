@@ -1,6 +1,6 @@
-import type { Attachment } from "@mariozechner/pi-web-ui/dist/utils/attachment-utils.js";
 import { html, LitElement } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import type { Attachment } from "../attachments/types.js";
 import type { MessageRenderer } from "../chat/renderers/index.js";
 import { registerMessageRenderer } from "../chat/renderers/index.js";
 import type { UserMessageWithAttachments } from "../chat/types.js";

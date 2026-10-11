@@ -56,4 +56,13 @@ assert.deepEqual(
 	[],
 	"Legacy chat shell and renderer implementations must not enter the browser bundle",
 );
-console.log(`Browser bundle verified: ${inputs.length} inputs, zero legacy SDK implementations.`);
+assert.deepEqual(
+	inputs.filter((path) =>
+		/pi-(?:mono\/packages\/web-ui|web-ui)\/(?:dist|src)\/(?:utils\/attachment-utils\.|components\/(?:AttachmentTile|sandbox\/AttachmentsRuntimeProvider)\.|dialogs\/AttachmentOverlay\.|tools\/extract-document\.)/.test(
+			path,
+		),
+	),
+	[],
+	"Legacy attachment and document extraction implementations must not enter the browser bundle",
+);
+console.log(`Browser bundle verified: ${inputs.length} inputs, zero retired SDK/UI implementations.`);

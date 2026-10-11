@@ -1,6 +1,6 @@
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { setLanguage } from "@mariozechner/mini-lit";
-import type { Attachment } from "@mariozechner/pi-web-ui/dist/utils/attachment-utils.js";
+import type { Attachment } from "../../src/attachments/types.js";
 import { ChatPanel } from "../../src/chat/ChatPanel.js";
 import { Agent } from "../../src/pi/agent.js";
 import { SitegeistAppStorage, setAppStorage } from "../../src/storage/app-storage.js";
