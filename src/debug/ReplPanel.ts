@@ -1,11 +1,11 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { icon } from "@mariozechner/mini-lit/dist/icons.js";
-import { ArtifactsRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/ArtifactsRuntimeProvider.js";
-import { ArtifactsPanel } from "@mariozechner/pi-web-ui/dist/tools/artifacts/artifacts.js";
-import { createJavaScriptReplTool } from "@mariozechner/pi-web-ui/dist/tools/javascript-repl.js";
 import { html, LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { Play, Square } from "lucide";
+import { ArtifactsPanel } from "../artifacts/ArtifactsPanel.js";
+import { ArtifactsRuntimeProvider } from "../artifacts/ArtifactsRuntimeProvider.js";
+import { createJavaScriptReplTool } from "../tools/javascript-repl.js";
 
 @customElement("repl-panel")
 export class ReplPanel extends LitElement {
@@ -48,11 +48,12 @@ export class ReplPanel extends LitElement {
 				this.abortController.signal,
 			);
 			this.output = result.content.find((c) => c.type === "text")?.text || "No output";
-		} catch (error: any) {
-			if (error.message === "Execution aborted") {
+		} catch (error: unknown) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (message === "Execution aborted") {
 				this.output = "Execution aborted by user";
 			} else {
-				this.output = `Error: ${error.message}`;
+				this.output = `Error: ${message}`;
 			}
 		} finally {
 			this.isExecuting = false;

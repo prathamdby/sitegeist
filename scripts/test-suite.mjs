@@ -18,6 +18,11 @@ switch (selection) {
 			"storage.test.mjs",
 			"attachments-runtime.test.mjs",
 			"navigation-steering.test.mjs",
+			"artifacts-runtime.test.mjs",
+			"artifacts-contract.test.mjs",
+			"artifacts-renderer-contract.test.mjs",
+			"artifact-preview-contract.test.mjs",
+			"debug-repl-contract.test.mjs",
 		];
 		if (suites.some((name) => name.startsWith("sandbox-"))) {
 			files.push("sandbox-routing.test.mjs", "sandbox-native-input.test.mjs");
