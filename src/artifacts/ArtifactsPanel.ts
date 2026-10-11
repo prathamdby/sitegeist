@@ -144,7 +144,7 @@ ${this.providers()
 		this.activeFilename = this.artifacts.keys().next().value ?? "";
 		this.requestUpdate();
 		this.onArtifactsChange?.();
-		await this.updateComplete;
+		if (this.isConnected) await this.updateComplete;
 	}
 
 	protected override updated(): void {
