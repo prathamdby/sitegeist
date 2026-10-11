@@ -1,5 +1,5 @@
-import type { SandboxRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/SandboxRuntimeProvider.js";
 import { NATIVE_INPUT_EVENTS_DESCRIPTION } from "../prompts/prompts.js";
+import type { SandboxRuntimeProvider } from "../sandbox/types.js";
 
 /**
  * Provides native input event functions to JavaScript REPL using Chrome Debugger API.
@@ -7,12 +7,21 @@ import { NATIVE_INPUT_EVENTS_DESCRIPTION } from "../prompts/prompts.js";
  * Operates on the currently active tab.
  */
 export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider {
+	private executionSignals = new Map<string, AbortSignal>();
 	private modifiers = 0; // Track currently pressed modifiers
 	// Modifier bit flags for CDP
 	private readonly MODIFIER_ALT = 1;
 	private readonly MODIFIER_CTRL = 2;
 	private readonly MODIFIER_META = 4;
 	private readonly MODIFIER_SHIFT = 8;
+
+	onExecutionStart(sandboxId: string, signal?: AbortSignal): void {
+		if (signal) this.executionSignals.set(sandboxId, signal);
+	}
+
+	onExecutionEnd(sandboxId: string): void {
+		this.executionSignals.delete(sandboxId);
+	}
 
 	getData(): Record<string, any> {
 		return {};
@@ -178,9 +187,16 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 		console.log("[NativeInput] Received event:", message.action, message);
 
 		// Get active tab ID once at the start
-		const tabId = await this.getActiveTabId();
+		const signal = this.executionSignals.get(message.sandboxId);
+		signal?.throwIfAborted();
+		const tabId = typeof message.runtimeTabId === "number" ? message.runtimeTabId : await this.getActiveTabId();
+		const sendCommand = async (method: string, params: Record<string, unknown>, release = false) => {
+			if (!release) signal?.throwIfAborted();
+			return chrome.debugger.sendCommand({ tabId }, method, params);
+		};
 
 		try {
+			signal?.throwIfAborted();
 			// Attach debugger to tab
 			await new Promise<void>((resolve, reject) => {
 				chrome.debugger.attach({ tabId }, "1.3", () => {
@@ -200,11 +216,12 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 				});
 			});
 
+			signal?.throwIfAborted();
 			if (message.action === "click") {
 				console.log("[NativeInput] Finding element:", message.selector);
 
 				// Find element and get its center coordinates
-				const result = (await chrome.debugger.sendCommand({ tabId: tabId }, "Runtime.evaluate", {
+				const result = (await sendCommand("Runtime.evaluate", {
 					expression: `(() => {
 							const el = document.querySelector(${JSON.stringify(message.selector)});
 							if (!el) throw new Error('Selector not found: ${message.selector}');
@@ -225,7 +242,7 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 				console.log("[NativeInput] Clicking at coordinates:", { x, y });
 
 				// Dispatch trusted mouse events
-				const pressResult = await chrome.debugger.sendCommand({ tabId: tabId }, "Input.dispatchMouseEvent", {
+				const pressResult = await sendCommand("Input.dispatchMouseEvent", {
 					type: "mousePressed",
 					x,
 					y,
@@ -234,13 +251,18 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 				});
 				console.log("[NativeInput] Mouse pressed result:", pressResult);
 
-				const releaseResult = await chrome.debugger.sendCommand({ tabId: tabId }, "Input.dispatchMouseEvent", {
-					type: "mouseReleased",
-					x,
-					y,
-					button: "left",
-					clickCount: 1,
-				});
+				const releaseResult = await sendCommand(
+					"Input.dispatchMouseEvent",
+					{
+						type: "mouseReleased",
+						x,
+						y,
+						button: "left",
+						clickCount: 1,
+					},
+					true,
+				);
+				signal?.throwIfAborted();
 				console.log("[NativeInput] Mouse released result:", releaseResult);
 
 				console.log("[NativeInput] Click completed successfully");
@@ -249,7 +271,7 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 				console.log("[NativeInput] Typing text:", message.text, "into:", message.selector);
 
 				// Focus element first
-				const focusResult = (await chrome.debugger.sendCommand({ tabId: tabId }, "Runtime.evaluate", {
+				const focusResult = (await sendCommand("Runtime.evaluate", {
 					expression: `(() => {
 							const el = document.querySelector(${JSON.stringify(message.selector)});
 							if (!el) throw new Error('Selector not found: ${message.selector}');
@@ -268,16 +290,21 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 
 				// Type each character
 				for (const char of message.text) {
-					await chrome.debugger.sendCommand({ tabId: tabId }, "Input.dispatchKeyEvent", {
+					await sendCommand("Input.dispatchKeyEvent", {
 						type: "keyDown",
 						text: char,
 					});
 
-					await chrome.debugger.sendCommand({ tabId: tabId }, "Input.dispatchKeyEvent", {
-						type: "keyUp",
-						text: char,
-					});
+					await sendCommand(
+						"Input.dispatchKeyEvent",
+						{
+							type: "keyUp",
+							text: char,
+						},
+						true,
+					);
 				}
+				signal?.throwIfAborted();
 
 				console.log("[NativeInput] Typing completed successfully");
 				respond({ success: true });
@@ -287,7 +314,7 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 				const keyInfo = this.getKeyInfo(message.key);
 
 				// Press single key with proper CDP parameters
-				const keyDownResult = await chrome.debugger.sendCommand({ tabId: tabId }, "Input.dispatchKeyEvent", {
+				const keyDownResult = await sendCommand("Input.dispatchKeyEvent", {
 					type: "keyDown",
 					key: keyInfo.key,
 					code: keyInfo.code,
@@ -296,13 +323,18 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 				});
 				console.log("[NativeInput] Key down result:", keyDownResult);
 
-				const keyUpResult = await chrome.debugger.sendCommand({ tabId: tabId }, "Input.dispatchKeyEvent", {
-					type: "keyUp",
-					key: keyInfo.key,
-					code: keyInfo.code,
-					windowsVirtualKeyCode: keyInfo.keyCode,
-					nativeVirtualKeyCode: keyInfo.keyCode,
-				});
+				const keyUpResult = await sendCommand(
+					"Input.dispatchKeyEvent",
+					{
+						type: "keyUp",
+						key: keyInfo.key,
+						code: keyInfo.code,
+						windowsVirtualKeyCode: keyInfo.keyCode,
+						nativeVirtualKeyCode: keyInfo.keyCode,
+					},
+					true,
+				);
+				signal?.throwIfAborted();
 				console.log("[NativeInput] Key up result:", keyUpResult);
 
 				console.log("[NativeInput] Key press completed successfully");
@@ -318,7 +350,7 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 				if (message.key === "Meta") this.modifiers |= this.MODIFIER_META;
 				if (message.key === "Shift") this.modifiers |= this.MODIFIER_SHIFT;
 
-				const keyDownResult = await chrome.debugger.sendCommand({ tabId: tabId }, "Input.dispatchKeyEvent", {
+				const keyDownResult = await sendCommand("Input.dispatchKeyEvent", {
 					type: "keyDown",
 					key: keyInfo.key,
 					code: keyInfo.code,
@@ -335,7 +367,7 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 
 				const keyInfo = this.getKeyInfo(message.key);
 
-				const keyUpResult = await chrome.debugger.sendCommand({ tabId: tabId }, "Input.dispatchKeyEvent", {
+				const keyUpResult = await sendCommand("Input.dispatchKeyEvent", {
 					type: "keyUp",
 					key: keyInfo.key,
 					code: keyInfo.code,

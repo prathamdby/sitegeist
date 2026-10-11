@@ -1,4 +1,4 @@
-import type { SandboxRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/SandboxRuntimeProvider.js";
+import type { SandboxRuntimeProvider } from "../sandbox/types.js";
 import type { Attachment } from "./types.js";
 
 type RuntimeAttachment = Pick<Attachment, "id" | "fileName" | "mimeType" | "size" | "content" | "extractedText">;

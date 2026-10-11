@@ -9,6 +9,7 @@
 - Replaced the model selector and settings shell with local components, retaining provider filtering, browser OAuth and custom model discovery; exposed OpenCode API key entry.
 - Replaced the chat shell, composer and message/tool rendering with local components driven by Pi 1.1.0, retaining attachment and artifact services and sequential navigation steering behavior.
 - Replaced attachment processing, previews, REPL file access and document extraction with local implementations, preserving upload flows, parser formats and saved attachment bytes.
+- Replaced production REPL and skill sandbox execution with a local runtime bridge, preserving browser helpers, attachment reads, cancellation and extension CSP.
 
 ### Removed
 

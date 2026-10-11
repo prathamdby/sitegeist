@@ -1,5 +1,7 @@
 // Minimal sandbox.js - just listens for sandbox-load and writes the content
 window.addEventListener("message", (event) => {
+	if (event.source !== window.parent || !event.data) return;
+	if (event.data.channel !== undefined && event.data.channel !== "sitegeist-runtime") return;
 	if (event.data.type === "sandbox-load") {
 		// Validate HTML and JavaScript syntax before document.write()
 		try {
@@ -38,6 +40,8 @@ window.addEventListener("message", (event) => {
 			window.parent.postMessage(
 				{
 					type: "sandbox-error",
+					channel: event.data.channel,
+					sandboxId: event.data.sandboxId,
 					error: validationError.message || String(validationError),
 					stack: validationError.stack || "",
 				},

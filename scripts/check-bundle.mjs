@@ -65,4 +65,34 @@ assert.deepEqual(
 	[],
 	"Legacy attachment and document extraction implementations must not enter the browser bundle",
 );
-console.log(`Browser bundle verified: ${inputs.length} inputs, zero retired SDK/UI implementations.`);
+const runtime = await build({
+	plugins: [storageBridge(root), settingsBridge(root), chatBridge(root)],
+	absWorkingDir: root,
+	entryPoints: ["src/tools/repl/repl.ts", "src/tools/repl/runtime-providers.ts", "src/tools/skill.ts"],
+	bundle: true,
+	platform: "browser",
+	format: "esm",
+	target: "chrome120",
+	outdir: "runtime-probe",
+	write: false,
+	metafile: true,
+	define: { "process.env.NODE_ENV": '"production"', "process.env.TARGET_BROWSER": '"chrome"', global: "globalThis" },
+	inject: [`${root}scripts/process-shim.js`],
+	alias: {
+		process: `${root}scripts/process-shim.js`,
+		"@mariozechner/pi-ai": `${root}src/pi/models.ts`,
+		"@mariozechner/pi-agent-core": `${root}src/pi/agent.ts`,
+		"@mariozechner/mini-lit": `${root}node_modules/@mariozechner/mini-lit`,
+		lit: `${root}node_modules/lit`,
+	},
+});
+assert.deepEqual(
+	Object.keys(runtime.metafile.inputs).filter((path) =>
+		/pi-(?:mono\/packages\/web-ui|web-ui)\/(?:dist|src)\/components\/(?:SandboxedIframe\.|sandbox\/)/.test(path),
+	),
+	[],
+	"Production REPL, skills and browser helpers must not include retained sandbox implementations",
+);
+console.log(
+	`Browser bundle verified: ${inputs.length} inputs, zero retired SDK/UI implementations; production runtime is local.`,
+);
