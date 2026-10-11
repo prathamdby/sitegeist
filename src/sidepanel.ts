@@ -341,6 +341,10 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		},
 		convertToLlm: browserMessageTransformer,
 		toolExecution: "sequential",
+		// OpenCode Go requires a per-conversation routing id (x-opencode-session).
+		// Use the persisted session id once minted, or an ephemeral one for the
+		// first turn of a not-yet-saved session; it is synced below on save.
+		sessionId: currentSessionId ?? crypto.randomUUID(),
 		beforeToolCall: async () => navigationSteeringGate(agent),
 		prepareRequest: async ({ model }) => {
 			const resolved = await modelConfiguration.resolveModel(model);
@@ -392,6 +396,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 			if (!currentSessionId && shouldSaveSession(messages)) {
 				currentSessionId = crypto.randomUUID();
+				agent.sessionId = currentSessionId;
 
 				port
 					.sendMessage({
