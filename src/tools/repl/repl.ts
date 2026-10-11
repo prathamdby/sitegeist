@@ -1,10 +1,4 @@
 import { i18n } from "@mariozechner/mini-lit";
-import {
-	type SandboxFile,
-	SandboxIframe,
-	type SandboxResult,
-} from "@mariozechner/pi-web-ui/dist/components/SandboxedIframe.js";
-import type { SandboxRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/SandboxRuntimeProvider.js";
 import { html } from "lit";
 import { createRef, ref } from "lit/directives/ref.js";
 import { Code } from "lucide";
@@ -20,8 +14,10 @@ import {
 import type { AgentTool } from "../../pi/agent.js";
 import type { ToolResultMessage } from "../../pi/models.js";
 import { REPL_TOOL_DESCRIPTION } from "../../prompts/prompts.js";
+import { type SandboxFile, SandboxIframe, type SandboxResult } from "../../sandbox/SandboxIframe.js";
+import type { SandboxRuntimeProvider } from "../../sandbox/types.js";
 import "../../utils/i18n-extension.js";
-import { injectOverlayForActiveTab, removeOverlayForActiveTab } from "./overlay-inject.js";
+import { injectOverlayForActiveTab, removeOverlay } from "./overlay-inject.js";
 
 // Execute JavaScript code with attachments using SandboxedIframe
 export async function executeJavaScript(
@@ -63,9 +59,12 @@ export async function executeJavaScript(
 	// Only inject overlay if code uses browserjs() (interacts with active tab)
 	const usesBrowserjs = code.includes("browserjs(");
 	let overlayTabId: number | undefined;
+	let overlayRequestId: string | undefined;
 	if (usesBrowserjs) {
 		try {
-			overlayTabId = await injectOverlayForActiveTab(taskName || "Executing JavaScript");
+			const overlay = await injectOverlayForActiveTab(taskName || "Executing JavaScript");
+			overlayTabId = overlay.tabId;
+			overlayRequestId = overlay.requestId;
 		} catch (error) {
 			console.warn("[REPL] Failed to inject overlay:", error);
 			// Continue execution even if overlay fails
@@ -129,8 +128,8 @@ export async function executeJavaScript(
 		}
 
 		// Remove overlay on success (if it was injected)
-		if (usesBrowserjs) {
-			await removeOverlayForActiveTab();
+		if (overlayTabId !== undefined && overlayRequestId !== undefined) {
+			await removeOverlay(overlayTabId, overlayRequestId);
 		}
 
 		return {
@@ -140,8 +139,8 @@ export async function executeJavaScript(
 	} catch (error: unknown) {
 		// Clean up on error
 		sandbox.remove();
-		if (usesBrowserjs) {
-			await removeOverlayForActiveTab();
+		if (overlayTabId !== undefined && overlayRequestId !== undefined) {
+			await removeOverlay(overlayTabId, overlayRequestId);
 		}
 		throw new Error((error as Error).message || "Execution failed");
 	}

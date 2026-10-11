@@ -3,13 +3,13 @@ import { i18n } from "@mariozechner/mini-lit";
 import { Badge } from "@mariozechner/mini-lit/dist/Badge.js";
 import "@mariozechner/pi-web-ui/dist/components/CustomProviderCard.js";
 import { ArtifactsRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/ArtifactsRuntimeProvider.js";
-import type { SandboxRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/SandboxRuntimeProvider.js";
 import { ArtifactsPanel } from "@mariozechner/pi-web-ui/dist/tools/artifacts/artifacts.js";
 import { ArtifactsToolRenderer } from "@mariozechner/pi-web-ui/dist/tools/artifacts/artifacts-tool-renderer.js";
 import { html, LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { AttachmentsRuntimeProvider } from "../attachments/AttachmentsRuntimeProvider.js";
 import { type Agent, executableTool } from "../pi/agent.js";
+import type { SandboxRuntimeProvider } from "../sandbox/types.js";
 import { AgentInterface } from "./AgentInterface.js";
 import { registerToolRenderer } from "./renderers/index.js";
 

@@ -48,6 +48,7 @@ import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-
 import { AskUserWhichElementTool, skillTool } from "./tools/index.js";
 import { NativeInputEventsRuntimeProvider } from "./tools/NativeInputEventsRuntimeProvider.js";
 import { isToolNavigating, NavigateTool } from "./tools/navigate.js";
+import { registerOverlayAbortHandler } from "./tools/repl/overlay-abort.js";
 import { createReplTool } from "./tools/repl/repl.js";
 import { BrowserJsRuntimeProvider, NavigateRuntimeProvider } from "./tools/repl/runtime-providers.js";
 import * as port from "./utils/port.js";
@@ -60,21 +61,14 @@ registerNavigationRenderer();
 registerExtractImageRenderer();
 
 // Listen for abort messages from REPL overlay
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-	console.log("[Sidepanel] Received message:", message, "from:", sender);
-	if (message.type === "abort-repl") {
-		console.log("[Sidepanel] Abort-repl message received, agent streaming:", agent?.state.isStreaming);
-		if (agent?.state.isStreaming) {
-			console.log("[Sidepanel] Aborting agent...");
-			agent.abort();
-			sendResponse({ success: true });
-		} else {
-			console.log("[Sidepanel] Agent not streaming, ignoring");
-			sendResponse({ success: false, reason: "not-streaming" });
-		}
-		return true; // Keep channel open for async response
-	}
-});
+registerOverlayAbortHandler(
+	() => {
+		if (!agent?.state.isStreaming) return false;
+		agent.abort();
+		return true;
+	},
+	() => currentWindowId,
+);
 
 // ============================================================================
 // STORAGE SETUP
@@ -305,6 +299,7 @@ const updateUrl = (sessionId: string) => {
 };
 
 const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true) => {
+	agent?.abort();
 	if (agentUnsubscribe) {
 		agentUnsubscribe();
 	}

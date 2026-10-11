@@ -1,4 +1,4 @@
-import { SandboxIframe } from "@mariozechner/pi-web-ui/dist/components/SandboxedIframe.js";
+import { SandboxIframe } from "../sandbox/SandboxIframe.js";
 import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
 import { icon } from "@mariozechner/mini-lit";
 import { Diff } from "@mariozechner/mini-lit/dist/Diff.js";
@@ -76,7 +76,10 @@ function checkForNavigation(code: string): { hasNavigation: boolean; warning?: s
  * Validate JavaScript syntax using sandboxed iframe (CSP-compliant).
  * Returns { valid: true } or { valid: false, error: string }
  */
-async function validateJavaScriptSyntax(code: string): Promise<{ valid: boolean; error?: string }> {
+async function validateJavaScriptSyntax(
+	code: string,
+	signal?: AbortSignal,
+): Promise<{ valid: boolean; error?: string }> {
 	// First check for navigation attempts
 	const navCheck = checkForNavigation(code);
 	if (navCheck.hasNavigation) {
@@ -89,7 +92,7 @@ async function validateJavaScriptSyntax(code: string): Promise<{ valid: boolean;
 	document.body.appendChild(sandbox);
 
 	try {
-		const result = await sandbox.execute(`syntax-check-${Date.now()}`, code, []);
+		const result = await sandbox.execute(`syntax-check-${Date.now()}`, code, [], [], signal);
 		sandbox.remove();
 
 		if (!result.success && result.error) {
@@ -200,7 +203,7 @@ export const skillTool: AgentTool<typeof skillParamsSchema, any> = {
 	name: "skill",
 	description: SKILL_TOOL_DESCRIPTION,
 	parameters: skillParamsSchema,
-	execute: async (_toolCallId: string, args: SkillParams) => {
+	execute: async (_toolCallId: string, args: SkillParams, signal?: AbortSignal) => {
 		const skillsRepo = getSkills();
 		const [tab] = await chrome.tabs.query({
 			active: true,
@@ -285,7 +288,7 @@ export const skillTool: AgentTool<typeof skillParamsSchema, any> = {
 				};
 
 				// Validate final library code before saving
-				const validation = await validateJavaScriptSyntax(newSkill.library);
+				const validation = await validateJavaScriptSyntax(newSkill.library, signal);
 				if (!validation.valid) {
 					throw new Error(validation.error);
 				}
@@ -330,7 +333,7 @@ export const skillTool: AgentTool<typeof skillParamsSchema, any> = {
 				};
 
 				// Validate final library code before saving
-				const validation = await validateJavaScriptSyntax(updated.library);
+				const validation = await validateJavaScriptSyntax(updated.library, signal);
 				if (!validation.valid) {
 					throw new Error(validation.error);
 				}
@@ -401,7 +404,7 @@ export const skillTool: AgentTool<typeof skillParamsSchema, any> = {
 					updated.library = updated.library.replace(old_string, new_string);
 
 					// Validate updated library syntax
-					const validation = await validateJavaScriptSyntax(updated.library);
+					const validation = await validateJavaScriptSyntax(updated.library, signal);
 					if (!validation.valid) {
 						throw new Error(`Update failed: Syntax error in updated library: ${validation.error}`);
 					}
@@ -426,7 +429,7 @@ export const skillTool: AgentTool<typeof skillParamsSchema, any> = {
 				updated.lastUpdated = new Date().toISOString();
 
 				// Validate final library code before saving
-				const finalValidation = await validateJavaScriptSyntax(updated.library);
+				const finalValidation = await validateJavaScriptSyntax(updated.library, signal);
 				if (!finalValidation.valid) {
 					throw new Error(finalValidation.error);
 				}

@@ -1,6 +1,6 @@
-import { RuntimeMessageBridge } from "@mariozechner/pi-web-ui/dist/components/sandbox/RuntimeMessageBridge.js";
-import { RUNTIME_MESSAGE_ROUTER } from "@mariozechner/pi-web-ui/dist/components/sandbox/RuntimeMessageRouter.js";
-import type { SandboxRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/SandboxRuntimeProvider.js";
+import { RuntimeMessageBridge } from "../../sandbox/RuntimeMessageBridge.js";
+import { RUNTIME_MESSAGE_ROUTER, type SandboxMessageBinding } from "../../sandbox/RuntimeMessageRouter.js";
+import type { SandboxRuntimeProvider } from "../../sandbox/types.js";
 
 export interface UserScriptsCheckResult {
 	available: boolean;
@@ -158,13 +158,24 @@ export function validateBrowserJavaScript(code: string): {
 // Wrapper function that executes user code - will be converted to string with .toString()
 async function wrapperFunction() {
 	let timeoutId: number;
+	let completionTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
 	// Injection marker (survives .toString())
 	("__INJECT_PROVIDERS_HERE__");
+	const runtime = window as Window & {
+		__completionCallbacks?: Array<(success: boolean) => Promise<void> | void>;
+		__consoleRuntimeCleanup?: () => void;
+		__runtimeBridgeCleanup?: () => void;
+	};
+	const callbacks = runtime.__completionCallbacks ?? [];
+	const consoleCleanup = runtime.__consoleRuntimeCleanup;
+	const bridgeCleanup = runtime.__runtimeBridgeCleanup;
 
 	const cleanup = () => {
 		if (timeoutId) clearTimeout(timeoutId);
-		// Runtime provider cleanup will be handled automatically
+		if (completionTimeoutId !== undefined) clearTimeout(completionTimeoutId);
+		consoleCleanup?.();
+		bridgeCleanup?.();
 	};
 
 	try {
@@ -185,17 +196,13 @@ async function wrapperFunction() {
 		const lastValue = await Promise.race([codePromise, timeoutPromise]);
 
 		// Call completion callbacks before returning (success path)
-		if (
-			// @ts-expect-error
-			window.__completionCallbacks &&
-			// @ts-expect-error
-			window.__completionCallbacks.length > 0
-		) {
+		if (callbacks.length > 0) {
 			try {
 				await Promise.race([
-					// @ts-expect-error
-					Promise.all(window.__completionCallbacks.map((cb) => cb(true))),
-					new Promise((_, reject) => setTimeout(() => reject(new Error("Completion timeout")), 5000)),
+					Promise.all(callbacks.map((cb) => cb(true))),
+					new Promise((_, reject) => {
+						completionTimeoutId = setTimeout(() => reject(new Error("Completion timeout")), 5000);
+					}),
 				]);
 			} catch (e) {
 				console.error("Completion callback error:", e);
@@ -209,17 +216,13 @@ async function wrapperFunction() {
 		};
 	} catch (error: any) {
 		// Call completion callbacks before returning (error path)
-		if (
-			// @ts-expect-error
-			window.__completionCallbacks &&
-			// @ts-expect-error
-			window.__completionCallbacks.length > 0
-		) {
+		if (callbacks.length > 0) {
 			try {
 				await Promise.race([
-					// @ts-expect-error
-					Promise.all(window.__completionCallbacks.map((cb) => cb(false))),
-					new Promise((_, reject) => setTimeout(() => reject(new Error("Completion timeout")), 5000)),
+					Promise.all(callbacks.map((cb) => cb(false))),
+					new Promise((_, reject) => {
+						completionTimeoutId = setTimeout(() => reject(new Error("Completion timeout")), 5000);
+					}),
 				]);
 			} catch (e) {
 				console.error("Completion callback error:", e);
@@ -245,6 +248,7 @@ export function buildWrapperCode(
 	providers: SandboxRuntimeProvider[],
 	sandboxId: string,
 	args?: any[],
+	binding?: SandboxMessageBinding,
 ): string {
 	// Start with wrapper function
 	let code = `(${wrapperFunction.toString()})`;
@@ -256,12 +260,14 @@ export function buildWrapperCode(
 	const bridgeCode = RuntimeMessageBridge.generateBridgeCode({
 		context: "user-script",
 		sandboxId: sandboxId,
+		worldId: binding?.worldId,
+		capability: binding?.capability,
 	});
 
 	let providerInjections = `${bridgeCode}\n`;
 
 	// Register sandbox with RUNTIME_MESSAGE_ROUTER
-	RUNTIME_MESSAGE_ROUTER.registerSandbox(sandboxId, providers, []);
+	RUNTIME_MESSAGE_ROUTER.registerSandbox(sandboxId, providers, [], binding);
 
 	// Inject data from providers (e.g., window.artifacts = {...})
 	for (const provider of providers) {

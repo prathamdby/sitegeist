@@ -1,10 +1,10 @@
-import { ConsoleRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/ConsoleRuntimeProvider.js";
-import { RUNTIME_MESSAGE_ROUTER } from "@mariozechner/pi-web-ui/dist/components/sandbox/RuntimeMessageRouter.js";
-import type { SandboxRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/SandboxRuntimeProvider.js";
 import {
 	BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION,
 	NAVIGATE_RUNTIME_PROVIDER_DESCRIPTION,
 } from "../../prompts/prompts.js";
+import { ConsoleRuntimeProvider } from "../../sandbox/ConsoleRuntimeProvider.js";
+import { RUNTIME_MESSAGE_ROUTER } from "../../sandbox/RuntimeMessageRouter.js";
+import type { RuntimeMessage, RuntimeResponse, SandboxRuntimeProvider } from "../../sandbox/types.js";
 import { getSitegeistStorage } from "../../storage/app-storage.js";
 import type { NavigateParams, NavigateTool } from "../navigate.js";
 import { buildWrapperCode, checkUserScriptsAvailability } from "./userscripts-helpers.js";
@@ -24,9 +24,8 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 	private activeExecutions = new Map<
 		string,
 		{
-			tabId: number;
-			executionId: string;
-			abortSignal?: AbortSignal;
+			ownerSandboxId?: string;
+			cancel: () => void;
 		}
 	>();
 	private sandboxAbortSignals = new Map<string, AbortSignal>();
@@ -51,11 +50,14 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 					throw new Error("First argument to browserjs() must be a function");
 				}
 
-				const response = await sendRuntimeMessage({
-					type: "browser-js",
-					code: func.toString(),
-					args: JSON.stringify(args),
-				});
+				const response = await sendRuntimeMessage(
+					{
+						type: "browser-js",
+						code: func.toString(),
+						args: JSON.stringify(args),
+					},
+					{ rejectOnError: false },
+				);
 
 				// Log console output from browserjs() execution to REPL's console
 				// BEFORE throwing errors, so console logs are visible even on failure
@@ -91,169 +93,155 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 	}
 
 	onExecutionEnd(sandboxId: string): void {
-		// Clean up the abort signal when REPL execution ends
+		for (const execution of this.activeExecutions.values()) {
+			if (execution.ownerSandboxId === sandboxId) execution.cancel();
+		}
 		this.sandboxAbortSignals.delete(sandboxId);
 	}
 
-	async handleMessage(message: any, respond: (response: any) => void): Promise<void> {
+	async handleMessage(message: RuntimeMessage, respond: (response: RuntimeResponse) => void): Promise<void> {
 		if (message.type !== "browser-js") {
 			return;
 		}
-
-		console.log("[BrowserJsRuntimeProvider] Received message:", message);
-
-		// Get the REPL sandbox's abort signal (if available)
-		const replSandboxId = message.sandboxId;
-		const abortSignal = replSandboxId ? this.sandboxAbortSignals.get(replSandboxId) : undefined;
-
-		// Check if userScripts API is available
-		const apiCheck = await checkUserScriptsAvailability();
-		if (!apiCheck.available) {
-			respond({
-				success: false,
-				error: apiCheck.message || "userScripts API not available",
-			});
-			return;
-		}
-
-		// Get current tab
-		const [tab] = await chrome.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-
-		if (!tab || !tab.id) {
-			respond({
-				success: false,
-				error: "No active tab found",
-			});
-			return;
-		}
-
-		// Validate tab URL (reject chrome://, chrome-extension://, about: URLs)
-		if (
-			tab.url?.startsWith("chrome://") ||
-			tab.url?.startsWith("chrome-extension://") ||
-			tab.url?.startsWith("moz-extension://") ||
-			tab.url?.startsWith("about:")
-		) {
-			respond({
-				success: false,
-				error: `Cannot execute scripts on ${tab.url}. Extension pages and internal URLs are protected.`,
-			});
-			return;
-		}
-
-		// Load skills for current tab URL
-		const skillsRepo = getSitegeistStorage().skills;
-		let skillLibrary = "";
-
-		if (tab.url) {
-			const matchingSkills = await skillsRepo.getSkillsForUrl(tab.url);
-			if (matchingSkills.length > 0) {
-				skillLibrary = `${matchingSkills.map((s) => s.library).join("\n\n")}\n\n`;
-			}
-		}
-
-		// Generate unique sandbox ID for this execution
 		const sandboxId = `browserjs_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-
-		// Parse args (passed as JSON string)
-		let parsedArgs: any[] = [];
-		if (message.args) {
-			try {
-				parsedArgs = JSON.parse(message.args);
-			} catch (e) {
+		const abortSignal = message.sandboxId ? this.sandboxAbortSignals.get(message.sandboxId) : undefined;
+		let cancelled = false;
+		let tabId: number | undefined;
+		let windowId: number | undefined;
+		let executionId: string | undefined;
+		let injectionStarted = false;
+		const executionController = new AbortController();
+		const startedProviders: SandboxRuntimeProvider[] = [];
+		let rejectCancellation: (error: Error) => void = () => {};
+		const cancellation = new Promise<never>((_, reject) => {
+			rejectCancellation = reject;
+		});
+		const userScripts = chrome.userScripts as
+			| (typeof chrome.userScripts & { terminate?: (tabId: number, executionId: string) => Promise<void> })
+			| undefined;
+		const cancel = () => {
+			if (cancelled) return;
+			cancelled = true;
+			rejectCancellation(new Error("Script execution was cancelled"));
+			executionController.abort();
+			this.cleanup(sandboxId);
+			if (injectionStarted && tabId !== undefined && executionId && userScripts?.terminate) {
+				void userScripts.terminate(tabId, executionId).catch((error: unknown) => {
+					console.error("[BrowserJsRuntimeProvider] Failed to terminate execution:", error);
+				});
+			}
+		};
+		this.activeExecutions.set(sandboxId, { ownerSandboxId: message.sandboxId, cancel });
+		abortSignal?.addEventListener("abort", cancel, { once: true });
+		const tabActivated = (info: chrome.tabs.OnActivatedInfo) => {
+			if (tabId !== undefined && info.tabId !== tabId && info.windowId === windowId) cancel();
+		};
+		const tabRemoved = (removedTabId: number) => {
+			if (removedTabId === tabId) cancel();
+		};
+		try {
+			if (abortSignal?.aborted) {
+				cancel();
+				await cancellation;
+			}
+			const apiCheck = await Promise.race([checkUserScriptsAvailability(), cancellation]);
+			if (!apiCheck.available) {
+				respond({ success: false, error: apiCheck.message || "userScripts API not available" });
+				return;
+			}
+			const [tab] = await Promise.race([chrome.tabs.query({ active: true, currentWindow: true }), cancellation]);
+			if (tab?.id === undefined) {
+				respond({ success: false, error: "No active tab found" });
+				return;
+			}
+			tabId = tab.id;
+			windowId = tab.windowId;
+			chrome.tabs.onActivated.addListener(tabActivated);
+			chrome.tabs.onRemoved.addListener(tabRemoved);
+			if (
+				tab.url?.startsWith("chrome://") ||
+				tab.url?.startsWith("chrome-extension://") ||
+				tab.url?.startsWith("moz-extension://") ||
+				tab.url?.startsWith("about:")
+			) {
 				respond({
 					success: false,
-					error: `Failed to parse arguments: ${e}`,
+					error: `Cannot execute scripts on ${tab.url}. Extension pages and internal URLs are protected.`,
 				});
 				return;
 			}
-		}
-
-		// Track this sandbox for cleanup
-		this.activeSandboxIds.add(sandboxId);
-
-		// Create a dedicated ConsoleRuntimeProvider for this browserjs() execution
-		const pageConsoleProvider = new ConsoleRuntimeProvider();
-
-		// Build wrapper code with skills, providers (including dedicated console provider), and args
-		const wrapperCode = buildWrapperCode(
-			message.code,
-			skillLibrary,
-			false, // disable safeguards for now
-			[pageConsoleProvider, ...this.sharedProviders],
-			sandboxId,
-			parsedArgs,
-		);
-
-		// Use fixed worldId for all executions
-		const FIXED_WORLD_ID = "sitegeist-browser-script";
-
-		// Check if terminate API is available (Chrome 138+)
-		// @ts-expect-error - terminate is not yet in the type definitions
-		const supportsTerminate = typeof chrome.userScripts?.terminate === "function";
-
-		// Generate execution ID for cancellation support (only if terminate is available)
-		const executionId = supportsTerminate ? crypto.randomUUID() : undefined;
-
-		// Track this execution for potential cancellation
-		if (executionId) {
-			this.activeExecutions.set(sandboxId, {
-				tabId: tab.id,
-				executionId: executionId,
-				abortSignal: abortSignal,
-			});
-		}
-
-		// Set up abort handler if signal is available and terminate is supported
-		const abortHandler = executionId
-			? async () => {
-					console.log(`[BrowserJsRuntimeProvider] Aborting execution ${executionId}`);
-					try {
-						// @ts-expect-error - terminate is not yet in the type definitions
-						await chrome.userScripts.terminate(tab.id!, executionId);
-						console.log(`[BrowserJsRuntimeProvider] Successfully terminated execution ${executionId}`);
-					} catch (e) {
-						console.error(`[BrowserJsRuntimeProvider] Failed to terminate execution:`, e);
-					}
+			let skillLibrary = "";
+			if (tab.url) {
+				const matchingSkills = await Promise.race([
+					getSitegeistStorage().skills.getSkillsForUrl(tab.url),
+					cancellation,
+				]);
+				if (matchingSkills.length > 0) {
+					skillLibrary = `${matchingSkills.map((skill) => skill.library).join("\n\n")}\n\n`;
 				}
-			: undefined;
-
-		if (abortSignal && abortHandler) {
-			abortSignal.addEventListener("abort", abortHandler);
-		}
-
-		try {
-			// Execute via userScripts API
-			if (chrome.userScripts && typeof chrome.userScripts.execute === "function") {
-				// Configure the fixed world with CSP
+			}
+			let parsedArgs: unknown[] = [];
+			if (message.args) {
 				try {
-					await chrome.userScripts.configureWorld({
-						worldId: FIXED_WORLD_ID,
-						messaging: true,
-						csp: "script-src 'unsafe-eval' 'unsafe-inline'; connect-src 'none'; img-src 'none'; media-src 'none'; frame-src 'none'; font-src 'none'; object-src 'none'; default-src 'none';",
-					});
-				} catch (e) {
-					console.warn("[BrowserJsRuntimeProvider] Failed to configure userScripts world:", e);
+					parsedArgs = JSON.parse(String(message.args));
+				} catch (error) {
+					respond({ success: false, error: `Failed to parse arguments: ${error}` });
+					return;
 				}
-
-				const injectionConfig: any = {
+			}
+			if (cancelled) await cancellation;
+			const worldId = "sitegeist-browser-script";
+			const pageConsoleProvider = new ConsoleRuntimeProvider();
+			const providers = [pageConsoleProvider, ...this.sharedProviders];
+			this.activeSandboxIds.add(sandboxId);
+			const wrapperCode = buildWrapperCode(
+				String(message.code),
+				skillLibrary,
+				false,
+				providers,
+				sandboxId,
+				parsedArgs,
+				{
+					transport: "user-script",
+					tabId,
+					frameId: 0,
+					worldId,
+					capability: crypto.randomUUID(),
+					signal: executionController.signal,
+				},
+			);
+			for (const provider of providers) {
+				startedProviders.push(provider);
+				provider.onExecutionStart?.(sandboxId, executionController.signal);
+			}
+			executionId = typeof userScripts?.terminate === "function" ? crypto.randomUUID() : undefined;
+			if (chrome.userScripts && typeof chrome.userScripts.execute === "function") {
+				try {
+					await Promise.race([
+						chrome.userScripts.configureWorld({
+							worldId,
+							messaging: true,
+							csp: "script-src 'unsafe-eval' 'unsafe-inline'; connect-src 'none'; img-src 'none'; media-src 'none'; frame-src 'none'; font-src 'none'; object-src 'none'; default-src 'none';",
+						}),
+						cancellation,
+					]);
+				} catch (error) {
+					if (cancelled) throw error;
+					console.warn("[BrowserJsRuntimeProvider] Failed to configure userScripts world:", error);
+				}
+				if (cancelled) await cancellation;
+				const injectionConfig: chrome.userScripts.UserScriptInjection & { executionId?: string } = {
 					js: [{ code: wrapperCode }],
-					target: { tabId: tab.id, allFrames: false },
+					target: { tabId, allFrames: false },
 					world: "USER_SCRIPT",
-					worldId: FIXED_WORLD_ID,
+					worldId,
 					injectImmediately: true,
 				};
-
-				// Only add executionId if terminate API is available
 				if (executionId) {
 					injectionConfig.executionId = executionId;
 				}
-
-				const results = await chrome.userScripts.execute(injectionConfig);
-
+				injectionStarted = true;
+				const results = await Promise.race([chrome.userScripts.execute(injectionConfig), cancellation]);
 				const result = results[0]?.result as
 					| {
 							success: boolean;
@@ -268,7 +256,7 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 
 				if (!result) {
 					respond({
-						success: true,
+						success: false,
 						error: "No result returned from script execution",
 						console: consoleLogs,
 					});
@@ -297,30 +285,30 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 					error: 'Firefox is currently not supported for browserjs(). Use Chrome 138+ with "Allow User Scripts" enabled.',
 				});
 			}
-		} catch (error: any) {
-			console.error("[BrowserJsRuntimeProvider] Error:", error);
-
-			// Check if this was a cancellation
-			const wasCancelled = abortSignal?.aborted;
-
+		} catch (error: unknown) {
 			respond({
 				success: false,
-				error: wasCancelled ? "Script execution was cancelled" : error.message || String(error),
-				cancelled: wasCancelled,
+				error: cancelled
+					? "Script execution was cancelled"
+					: error instanceof Error
+						? error.message
+						: String(error),
+				cancelled,
 			});
 		} finally {
-			// Cleanup abort handler
-			if (abortSignal && abortHandler) {
-				abortSignal.removeEventListener("abort", abortHandler);
-			}
-
-			// Cleanup execution tracking
-			if (executionId) {
-				this.activeExecutions.delete(sandboxId);
-			}
-
-			// Cleanup sandbox registration
+			abortSignal?.removeEventListener("abort", cancel);
+			chrome.tabs.onActivated.removeListener(tabActivated);
+			chrome.tabs.onRemoved.removeListener(tabRemoved);
+			this.activeExecutions.delete(sandboxId);
 			this.cleanup(sandboxId);
+			executionController.abort();
+			for (const provider of startedProviders) {
+				try {
+					provider.onExecutionEnd?.(sandboxId);
+				} catch (error) {
+					console.error("Browser runtime provider cleanup failed", error);
+				}
+			}
 		}
 	}
 
@@ -342,10 +330,12 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 	 * Cleanup all active sandboxes (call when provider is destroyed)
 	 */
 	public cleanupAll() {
+		for (const execution of this.activeExecutions.values()) execution.cancel();
 		for (const sandboxId of this.activeSandboxIds) {
 			RUNTIME_MESSAGE_ROUTER.unregisterSandbox(sandboxId);
 		}
 		this.activeSandboxIds.clear();
+		this.sandboxAbortSignals.clear();
 	}
 }
 
@@ -359,7 +349,17 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
  *   await navigate({ history: 'back' });
  */
 export class NavigateRuntimeProvider implements SandboxRuntimeProvider {
+	private sandboxAbortSignals = new Map<string, AbortSignal>();
+
 	constructor(private navigateTool: NavigateTool) {}
+
+	onExecutionStart(sandboxId: string, signal?: AbortSignal): void {
+		if (signal) this.sandboxAbortSignals.set(sandboxId, signal);
+	}
+
+	onExecutionEnd(sandboxId: string): void {
+		this.sandboxAbortSignals.delete(sandboxId);
+	}
 
 	getData(): Record<string, any> {
 		return {};
@@ -389,7 +389,7 @@ export class NavigateRuntimeProvider implements SandboxRuntimeProvider {
 		};
 	}
 
-	async handleMessage(message: any, respond: (response: any) => void): Promise<void> {
+	async handleMessage(message: RuntimeMessage, respond: (response: RuntimeResponse) => void): Promise<void> {
 		if (message.type !== "navigate") {
 			return;
 		}
@@ -398,7 +398,12 @@ export class NavigateRuntimeProvider implements SandboxRuntimeProvider {
 
 		try {
 			// Call the navigate tool
-			const result = await this.navigateTool.execute(`navigate_${Date.now()}`, message.args as NavigateParams);
+			const signal = message.sandboxId ? this.sandboxAbortSignals.get(message.sandboxId) : undefined;
+			const result = await this.navigateTool.execute(
+				`navigate_${Date.now()}`,
+				message.args as NavigateParams,
+				signal,
+			);
 
 			respond({
 				success: true,
