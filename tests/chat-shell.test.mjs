@@ -8,11 +8,9 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { build } from "esbuild";
-import { chatBridge } from "../scripts/chat-bridge.mjs";
-import { settingsBridge } from "../scripts/settings-bridge.mjs";
-import { storageBridge } from "../scripts/storage-bridge.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const recorded = JSON.parse(readFileSync(join(root, "tests/fixtures/contracts/chat-shell.json"), "utf8"));
 let browser;
 let server;
 let directory;
@@ -27,13 +25,10 @@ before(async () => {
 		write: false,
 		platform: "browser",
 		format: "esm",
-		plugins: [storageBridge(root), settingsBridge(root), chatBridge(root)],
 		define: { "process.env.NODE_ENV": '"test"', global: "globalThis" },
 		inject: [`${root}scripts/process-shim.js`],
 		alias: {
 			process: `${root}scripts/process-shim.js`,
-			"@mariozechner/pi-ai": `${root}src/pi/models.ts`,
-			"@mariozechner/pi-agent-core": `${root}src/pi/agent.ts`,
 			"@mariozechner/mini-lit": `${root}node_modules/@mariozechner/mini-lit`,
 			lit: `${root}node_modules/lit`,
 		},
@@ -46,36 +41,20 @@ before(async () => {
 			write: false,
 			platform: "browser",
 			format: "esm",
-			plugins: [storageBridge(root), settingsBridge(root), chatBridge(root)],
 			define: { "process.env.NODE_ENV": '"test"', global: "globalThis" },
 			inject: [`${root}scripts/process-shim.js`],
 			alias: {
 				process: `${root}scripts/process-shim.js`,
-				"@mariozechner/pi-ai": `${root}src/pi/models.ts`,
-				"@mariozechner/pi-agent-core": `${root}src/pi/agent.ts`,
 				"@mariozechner/mini-lit": `${root}node_modules/@mariozechner/mini-lit`,
 				lit: `${root}node_modules/lit`,
 			},
 		});
-	const [seed, sidepanel, baseline] = await Promise.all([
+	const [seed, sidepanel] = await Promise.all([
 		sidepanelBuild("tests/browser/chat-sidepanel.ts"),
 		sidepanelBuild("src/sidepanel.ts"),
-		sidepanelBuild("tests/browser/chat-shell-baseline.ts"),
 	]);
 	const css = readFileSync(join(directory, "app.css"));
 	server = createServer((request, response) => {
-		if (request.url === "/baseline.js") {
-			response.setHeader("Content-Type", "text/javascript");
-			response.end(baseline.outputFiles[0].text);
-			return;
-		}
-		if (request.url === "/baseline") {
-			response.setHeader("Content-Type", "text/html");
-			response.end(
-				'<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><script type="module" src="/baseline.js"></script>',
-			);
-			return;
-		}
 		if (request.url === "/seed.js" || request.url === "/sidepanel.js") {
 			response.setHeader("Content-Type", "text/javascript");
 			response.end(request.url === "/seed.js" ? seed.outputFiles[0].text : sidepanel.outputFiles[0].text);
@@ -104,6 +83,7 @@ before(async () => {
 	origin = `http://127.0.0.1:${server.address().port}`;
 	const executablePath =
 		process.env.CHROMIUM_PATH ||
+		(existsSync(chromium.executablePath()) ? chromium.executablePath() : undefined) ||
 		["/usr/local/bin/chromium", "/usr/bin/chromium", "/usr/bin/google-chrome"].find(existsSync);
 	browser = await chromium.launch({ executablePath, headless: true, args: ["--no-sandbox"] });
 });
@@ -300,6 +280,9 @@ test("pre-token pending cursor gives way to one streamed reasoning/text message 
 		await page.evaluate(() => {
 			window.chatFixture.holdStream(true);
 			window.chatFixture.delayStreamStart(true);
+			window.chatFixture.holdAgentEnd();
+			window.nativeMessages = window.chatFixture.agent.state.messages;
+			window.presentedMessages = document.querySelector("sitegeist-message-list").messages;
 		});
 		await page.locator("textarea").fill("Pending fixture");
 		await page.locator("textarea").press("Enter");
@@ -312,10 +295,63 @@ test("pre-token pending cursor gives way to one streamed reasoning/text message 
 		await page.getByText("Streaming fixture reply", { exact: true }).waitFor();
 		assert.equal(await page.locator("sitegeist-agent-interface .animate-pulse").count(), 0);
 		assert.equal(await page.locator("sitegeist-thinking-block .animate-shimmer").count(), 1);
+		await page.locator("sitegeist-thinking-block .thinking-header").last().click();
+		await page.evaluate(() => {
+			window.streamingRow = [...document.querySelectorAll("sitegeist-assistant-message")].at(-1);
+			window.chatFixture.agent.waitForIdle().then(() => {
+				window.idleSettled = true;
+			});
+		});
 		await page.evaluate(() => window.chatFixture.releaseStream());
-		await page.waitForFunction(() => !window.chatFixture.agent.state.isStreaming);
+		await page.waitForFunction(() => window.chatFixture.agentEndHeld);
+		assert.equal(await page.evaluate(() => window.chatFixture.agent.state.isStreaming), true);
+		assert.equal(await page.locator("sitegeist-message-editor").evaluate((editor) => editor.isStreaming), false);
 		assert.equal(await page.getByText("Streaming fixture reply", { exact: true }).count(), 1);
 		assert.equal(await page.locator("sitegeist-agent-interface .animate-pulse").count(), 0);
+		assert.equal(await page.locator("sitegeist-thinking-block .animate-shimmer").count(), 0);
+		assert.deepEqual(
+			await page.evaluate(() => {
+				const messages = window.chatFixture.agent.state.messages;
+				const list = document.querySelector("sitegeist-message-list");
+				const final = messages.filter((message) => message.role === "assistant").at(-1);
+				const rows = [...document.querySelectorAll("sitegeist-assistant-message")].filter(
+					(row) => row.message === final,
+				);
+				return {
+					nativeArrayRetained: messages === window.nativeMessages,
+					presentationArrayChanged: list.messages !== window.presentedMessages,
+					presentationDoesNotAliasNative: list.messages !== messages,
+					messageObjectsRetained: list.messages.every((message, index) => message === messages[index]),
+					finalRows: rows.length,
+					streamingRowRetained: rows[0] === window.streamingRow,
+					streamingMessageCleared: !list.streamingMessage,
+					reasoningExpanded: [...document.querySelectorAll("sitegeist-thinking-block")].at(-1).isExpanded,
+					idleSettled: Boolean(window.idleSettled),
+				};
+			}),
+			{
+				nativeArrayRetained: true,
+				presentationArrayChanged: true,
+				presentationDoesNotAliasNative: true,
+				messageObjectsRetained: true,
+				finalRows: 1,
+				streamingRowRetained: true,
+				streamingMessageCleared: true,
+				reasoningExpanded: true,
+				idleSettled: false,
+			},
+		);
+		await page.evaluate(() => {
+			const controller = window.chatFixture.controller;
+			const parent = controller.parentNode;
+			const next = controller.nextSibling;
+			controller.remove();
+			parent.insertBefore(controller, next);
+		});
+		await page.evaluate(() => window.chatFixture.releaseAgentEnd());
+		await page.waitForFunction(() => !window.chatFixture.agent.state.isStreaming);
+		await page.waitForFunction(() => document.querySelector("sitegeist-message-editor").isStreaming === false);
+		assert.equal(await page.getByText("Streaming fixture reply", { exact: true }).count(), 1);
 	} finally {
 		await page.close();
 	}
@@ -479,7 +515,8 @@ test("composer drag, processing and attachment-strip presentation preserve the m
 test("German composer thinking choices and artifact pill retain their baseline translations", async () => {
 	const page = await fixture();
 	try {
-		await page.evaluate(() => window.chatFixture.language("de"));
+		await Promise.all([page.waitForEvent("load"), page.evaluate(() => window.chatFixture.language("de"))]);
+		await page.waitForFunction(() => window.chatFixture);
 		await page.waitForFunction(() =>
 			document.querySelector("sitegeist-message-editor button[role=combobox]")?.textContent.includes("Mittel"),
 		);
@@ -620,13 +657,19 @@ test("artifacts auto-open, close to the centered count pill and resize at 800px"
 		assert.ok(Math.abs(bounds.x + bounds.width / 2 - 600) < 1);
 		await pill.click();
 		await page.setViewportSize({ width: 799, height: 800 });
-		await page.waitForFunction(() => window.chatFixture.panel.artifactsPanel.overlay);
+		await page.waitForFunction(() => {
+			const panel = window.chatFixture.panel.artifactsPanel;
+			return panel.overlay && panel.getBoundingClientRect().width === 799;
+		});
 		assert.equal(
 			await page.evaluate(() => window.chatFixture.panel.artifactsPanel.getBoundingClientRect().width),
 			799,
 		);
 		await page.setViewportSize({ width: 800, height: 800 });
-		await page.waitForFunction(() => !window.chatFixture.panel.artifactsPanel.overlay);
+		await page.waitForFunction(() => {
+			const panel = window.chatFixture.panel.artifactsPanel;
+			return !panel.overlay && panel.getBoundingClientRect().width === 400;
+		});
 		assert.equal(
 			await page.evaluate(() => window.chatFixture.panel.artifactsPanel.getBoundingClientRect().width),
 			400,
@@ -682,18 +725,14 @@ test("light, narrow and dark fixtures retain composer dimensions and produce reu
 		["wide-dark", 1200, true],
 	]) {
 		const page = await fixture(width);
-		const baseline = await browser.newPage({ viewport: { width, height: 800 } });
-		baseline.on("pageerror", (error) => console.error(error.stack ?? error.message));
 		try {
-			await baseline.goto(`${origin}/baseline`);
-			await baseline.waitForFunction(() => document.body.dataset.baselineReady === "true");
 			if (dark)
 				await Promise.all(
-					[page, baseline].map((view) => view.evaluate(() => document.documentElement.classList.add("dark"))),
+					[page].map((view) => view.evaluate(() => document.documentElement.classList.add("dark"))),
 				);
 			await page.waitForTimeout(350);
 			const bounds = await page.locator("sitegeist-message-editor > div").boundingBox();
-			const expected = await baseline.locator("message-editor > div").boundingBox();
+			const expected = recorded[name];
 			assert.deepEqual(bounds, expected);
 			assert.equal(bounds.width, width === 1200 ? 752 : 374);
 			if (process.env.CHAT_RENDER_DIR) {
@@ -706,7 +745,6 @@ test("light, narrow and dark fixtures retain composer dimensions and produce reu
 			}
 		} finally {
 			await page.close();
-			await baseline.close();
 		}
 	}
 });

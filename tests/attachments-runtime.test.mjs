@@ -3,7 +3,6 @@ import test from "node:test";
 import vm from "node:vm";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
-import { AttachmentsRuntimeProvider as BaselineAttachmentsRuntimeProvider } from "../node_modules/@mariozechner/pi-web-ui/dist/components/sandbox/AttachmentsRuntimeProvider.js";
 import { AttachmentsRuntimeProvider } from "../src/attachments/AttachmentsRuntimeProvider.ts";
 import { browserMessageTransformer } from "../src/messages/message-transformer.ts";
 import { Agent } from "../src/pi/agent.ts";
@@ -63,7 +62,7 @@ test("attachment helpers are self-contained injected functions with original byt
 });
 
 test("corrupt base64, non-string IDs and text fallbacks preserve the retained sandbox contract", () => {
-	for (const Provider of [BaselineAttachmentsRuntimeProvider, AttachmentsRuntimeProvider]) {
+	for (const Provider of [AttachmentsRuntimeProvider]) {
 		const target = runtime(attachments, Provider);
 		for (const id of [undefined, null, 7, "notes.txt"]) {
 			for (const read of [target.readTextAttachment, target.readBinaryAttachment]) {

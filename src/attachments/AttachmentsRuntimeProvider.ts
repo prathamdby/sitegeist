@@ -1,3 +1,4 @@
+import { ATTACHMENTS_RUNTIME_DESCRIPTION } from "../prompts/attachments.js";
 import type { SandboxRuntimeProvider } from "../sandbox/types.js";
 import type { Attachment } from "./types.js";
 
@@ -50,21 +51,6 @@ export class AttachmentsRuntimeProvider implements SandboxRuntimeProvider {
 	}
 
 	getDescription(): string {
-		return `
-### User Attachments
-
-Read files the user uploaded to the conversation.
-
-#### When to Use
-- Process user-uploaded files (CSV, JSON, Excel, images, PDFs)
-
-#### Functions
-- listAttachments() - List all attachments, returns array of {id, fileName, mimeType, size}
-- readTextAttachment(id) - Read attachment as text, returns string
-- readBinaryAttachment(id) - Read attachment as binary data, returns Uint8Array
-
-Use listAttachments() to find a file by its fileName, then pass its id to a read function.
-For CSV or JSON, use readTextAttachment(id). For Excel or images, use readBinaryAttachment(id).
-`;
+		return ATTACHMENTS_RUNTIME_DESCRIPTION;
 	}
 }

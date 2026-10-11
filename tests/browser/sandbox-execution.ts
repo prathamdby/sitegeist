@@ -1,6 +1,4 @@
-import { SandboxIframe as BaselineSandboxIframe } from "@mariozechner/pi-web-ui/dist/components/SandboxedIframe.js";
-import { ArtifactsRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/ArtifactsRuntimeProvider.js";
-import { FileDownloadRuntimeProvider as BaselineFileDownloadRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/FileDownloadRuntimeProvider.js";
+import { ArtifactsRuntimeProvider } from "../../src/artifacts/ArtifactsRuntimeProvider.js";
 import { AttachmentsRuntimeProvider } from "../../src/attachments/AttachmentsRuntimeProvider.js";
 import { FileDownloadRuntimeProvider } from "../../src/sandbox/FileDownloadRuntimeProvider.js";
 import { SandboxIframe } from "../../src/sandbox/SandboxIframe.js";
@@ -11,7 +9,7 @@ import { skillTool } from "../../src/tools/skill.js";
 const storage = new SitegeistAppStorage();
 setAppStorage(storage);
 
-let active: SandboxIframe | BaselineSandboxIframe | undefined;
+let active: SandboxIframe | undefined;
 let controller: AbortController | undefined;
 const lifecycle: string[] = [];
 const violations: string[] = [];
@@ -51,9 +49,9 @@ const fixture = {
 			};
 		}
 	},
-	async execute(code: string, baseline = false, packaged = true) {
+	async execute(code: string, packaged = true) {
 		controller = new AbortController();
-		const sandbox = baseline ? new BaselineSandboxIframe() : new SandboxIframe();
+		const sandbox = new SandboxIframe();
 		active = sandbox;
 		if (packaged) sandbox.sandboxUrlProvider = () => chrome.runtime.getURL("sandbox.html");
 		sandbox.style.display = "none";
@@ -82,7 +80,7 @@ const fixture = {
 				code,
 				[
 					provider,
-					baseline ? new BaselineFileDownloadRuntimeProvider() : new FileDownloadRuntimeProvider(),
+					new FileDownloadRuntimeProvider(),
 					new ArtifactsRuntimeProvider(
 						{
 							artifacts,

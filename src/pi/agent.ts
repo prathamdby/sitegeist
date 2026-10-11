@@ -1,11 +1,4 @@
-import {
-	type AgentMessage,
-	type AgentOptions,
-	type AgentState,
-	type AgentTool,
-	Agent as PiAgent,
-	type ThinkingLevel,
-} from "@earendil-works/pi-agent-core";
+import { type AgentMessage, type AgentTool, Agent as PiAgent, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
 	type Api,
 	createInitialSystemMessage,
@@ -39,26 +32,7 @@ declare module "@earendil-works/pi-agent-core" {
 }
 
 export class Agent extends PiAgent {
-	private readonly presentationState: AgentState;
-	private turnEnded = false;
 	onModelRequired?: () => void;
-
-	constructor(options: AgentOptions) {
-		super(options);
-		this.presentationState = new Proxy(super.state, {
-			get: (state, property, receiver) =>
-				property === "isStreaming" ? state.isStreaming && !this.turnEnded : Reflect.get(state, property, receiver),
-		});
-		super.subscribe((event) => {
-			if (event.type === "message_end") super.state.messages = super.state.messages;
-			if (event.type === "agent_start") this.turnEnded = false;
-			if (event.type === "agent_end") this.turnEnded = true;
-		});
-	}
-
-	override get state(): AgentState {
-		return this.presentationState;
-	}
 
 	override async prompt(input: string | AgentMessage | AgentMessage[], images?: ImageContent[]): Promise<void> {
 		if (!this.state.model.provider) {

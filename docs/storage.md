@@ -2,23 +2,25 @@
 
 ## Overview
 
-Sitegeist uses a unified IndexedDB storage system with multiple object stores for different data types. The base storage infrastructure is defined in `@mariozechner/pi-web-ui` and extended in Sitegeist with additional stores for skills.
+Sitegeist uses a unified IndexedDB storage system with multiple object stores for different data types. The complete storage infrastructure is implemented in Sitegeist under `src/storage/`.
 
 ## Current Implementation
 
-Single IndexedDB database `sitegeist-storage` with multiple object stores:
+Single IndexedDB database `sitegeist-storage` (schema version 3) with multiple object stores:
 
-**Base stores** (from web-ui):
+**Core stores** (Sitegeist-owned):
 - `sessions` - Full session data (messages, model, thinking level)
 - `sessions-metadata` - Lightweight session metadata (title, timestamps, usage)
 - `settings` - Application settings (key-value pairs)
 - `provider-keys` - API keys for LLM providers
 
-**Extension stores** (Sitegeist-specific):
+**Additional Sitegeist stores**:
 - `skills` - Skill definitions with library code
+- `custom-providers` - User-defined provider configurations
+- `daily_costs` - Per-day provider/model cost aggregates
 
 **Benefits**:
-- **Quota**: ~10GB vs 10MB chrome.storage limit (60% disk on Chrome, 50% on Firefox)
+- **Quota**: Uses browser-managed IndexedDB quota; query it through the backend rather than assuming a fixed limit
 - **Consistency**: Single API, unified transactions
 - **Performance**: IndexedDB indices for efficient queries
 - **Atomic operations**: Multi-store transactions
@@ -28,7 +30,7 @@ Single IndexedDB database `sitegeist-storage` with multiple object stores:
 
 ### StorageBackend Interface
 
-Location: `pi-mono/packages/web-ui/src/storage/types.ts`
+Location: `src/storage/types.ts`
 
 ```typescript
 export interface StorageBackend {
@@ -62,7 +64,7 @@ export interface StorageBackend {
 
 ### IndexedDBStorageBackend
 
-Location: `pi-mono/packages/web-ui/src/storage/backends/indexeddb-storage-backend.ts`
+Location: `src/storage/backends/indexeddb-storage-backend.ts`
 
 Implements the `StorageBackend` interface using IndexedDB APIs.
 
@@ -91,13 +93,13 @@ const backend = new IndexedDBStorageBackend({
 
 ### Store Pattern
 
-Location: `pi-mono/packages/web-ui/src/storage/store.ts`
+Location: `src/storage/store.ts`
 
 Base class for all stores:
 
 ```typescript
 export abstract class Store {
-  private backend: StorageBackend | null = null;
+  private backend?: StorageBackend;
 
   abstract getConfig(): StoreConfig;
 
@@ -107,7 +109,7 @@ export abstract class Store {
 
   protected getBackend(): StorageBackend {
     if (!this.backend) {
-      throw new Error(`Store ${this.constructor.name} not initialized`);
+      throw new Error("Storage backend has not been initialized");
     }
     return this.backend;
   }
@@ -121,11 +123,11 @@ export abstract class Store {
 - Extensible via subclassing
 - Testable with mocked backend
 
-## Base Stores (web-ui)
+## Core Stores (Sitegeist)
 
 ### SettingsStore
 
-Location: `pi-mono/packages/web-ui/src/storage/stores/settings-store.ts`
+Location: `src/storage/stores/settings-store.ts`
 
 Simple key-value store for application settings.
 
@@ -138,13 +140,14 @@ export class SettingsStore extends Store {
   async get<T>(key: string): Promise<T | null>
   async set<T>(key: string, value: T): Promise<void>
   async delete(key: string): Promise<void>
+  async list(): Promise<string[]>
   async clear(): Promise<void>
 }
 ```
 
 ### ProviderKeysStore
 
-Location: `pi-mono/packages/web-ui/src/storage/stores/provider-keys-store.ts`
+Location: `src/storage/stores/provider-keys-store.ts`
 
 Stores API keys for LLM providers (Anthropic, OpenAI, etc).
 
@@ -157,12 +160,14 @@ export class ProviderKeysStore extends Store {
   async get(provider: string): Promise<string | null>
   async set(provider: string, apiKey: string): Promise<void>
   async delete(provider: string): Promise<void>
+  async list(): Promise<string[]>
+  async has(provider: string): Promise<boolean>
 }
 ```
 
 ### SessionsStore
 
-Location: `pi-mono/packages/web-ui/src/storage/stores/sessions-store.ts`
+Location: `src/storage/stores/base-sessions-store.ts`
 
 Manages chat sessions using two object stores for performance:
 - `sessions` - Full session data (large, rarely listed)
@@ -209,7 +214,7 @@ export class SessionsStore extends Store {
 
   async getLatestSessionId(): Promise<string | null> {
     const allMetadata = await this.getAllMetadata();
-    return allMetadata[0]?.id || null;
+    return allMetadata[0]?.id ?? null;
   }
 }
 ```
@@ -222,6 +227,10 @@ export class SessionsStore extends Store {
 **Index usage**:
 - `lastModified` index enables sorted queries via IndexedDB cursor
 - Much faster than fetching all keys and sorting in JavaScript
+
+### SitegeistSessionsStore
+
+`src/storage/stores/sessions-store.ts` extends the base session store. Its `saveSession(id, state, metadata, title?)` helper saves the agent state and metadata together. Its `get()` and `loadSession()` readers convert legacy tool-result records with a string `output` and no `content` into text-content blocks in the returned value; this compatibility conversion does not rewrite the IndexedDB record.
 
 ## Extension Stores (Sitegeist)
 
@@ -254,64 +263,28 @@ export class SkillsStore extends Store {
 - `createdAt` - Timestamp when skill was created
 - `lastUpdated` - Timestamp when skill was last modified
 
+### CustomProvidersStore and CostStore
+
+`CustomProvidersStore` persists user-defined providers by ID in `custom-providers`. It exposes `get`, `set`, `delete`, `has`, and `getAll`; provider records can include a custom API key and model list.
+
+`CostStore` persists daily aggregates in `daily_costs`, keyed and indexed by date. `recordCost()` uses a read/write transaction to update daily total and provider/model subtotals atomically. The store also provides newest-first listing, total/provider/model summaries, and date-range filtering.
+
 ## AppStorage Wiring
 
-### Base AppStorage (web-ui)
-
-Location: `pi-mono/packages/web-ui/src/storage/app-storage.ts`
-
-```typescript
-export class AppStorage {
-  readonly backend: StorageBackend;
-  readonly settings: SettingsStore;
-  readonly providerKeys: ProviderKeysStore;
-  readonly sessions: SessionsStore;
-
-  constructor(
-    settings: SettingsStore,
-    providerKeys: ProviderKeysStore,
-    sessions: SessionsStore,
-    backend: StorageBackend
-  ) {
-    this.settings = settings;
-    this.providerKeys = providerKeys;
-    this.sessions = sessions;
-    this.backend = backend;
-  }
-}
-
-// Global singleton
-export function getAppStorage(): AppStorage {
-  if (!globalAppStorage) {
-    throw new Error('AppStorage not initialized');
-  }
-  return globalAppStorage;
-}
-
-export function setAppStorage(storage: AppStorage): void {
-  globalAppStorage = storage;
-}
-```
-
-### SitegeistAppStorage (extension)
+### AppStorage (Sitegeist)
 
 Location: `src/storage/app-storage.ts`
 
-Extends base storage with Sitegeist-specific stores.
+`AppStorage` exposes the shared stores `settings`, `providerKeys`, `sessions`, `customProviders`, and `backend`, plus `getQuotaInfo()` and `requestPersistence()`. `SitegeistAppStorage` adds `skills` and `costs` and creates the IndexedDB backend for database `sitegeist-storage`, schema version 3.
 
 **Initialization order**:
-1. Create store instances (no backend)
-2. Collect all store configs
-3. Create IndexedDB backend with unified config
-4. Wire backend to all stores
-5. Call parent constructor
-6. Store extension-specific references
+1. Instantiate the domain stores.
+2. Gather each store's schema configuration, including the `sessions-metadata` config.
+3. Create one `IndexedDBStorageBackend` with the database name, version, and all configurations.
+4. Wire each store to that backend.
+5. Expose the stores through `SitegeistAppStorage`.
 
-**Why this order?**
-- Backend needs all configs upfront for `onupgradeneeded`
-- No circular dependencies
-- Each store owns its schema
-- Type-safe access to extension stores
+`getAppStorage()` returns the initialized singleton set by `setAppStorage()`. `getSitegeistStorage()` returns it only when it is a `SitegeistAppStorage`; it throws if storage has not been initialized or is the base `AppStorage` type.
 
 ## Usage Examples
 
@@ -323,9 +296,9 @@ const storage = getAppStorage();
 const sessionData: SessionData = {
   id: crypto.randomUUID(),
   title: 'My Session',
-  model: getModel('anthropic', 'claude-sonnet-4'),
-  thinkingLevel: 'off',
-  messages: [...],
+  model: agent.state.model,
+  thinkingLevel: agent.state.thinkingLevel,
+  messages: agent.state.messages,
   createdAt: new Date().toISOString(),
   lastModified: new Date().toISOString(),
 };
@@ -336,7 +309,14 @@ const metadata: SessionMetadata = {
   createdAt: sessionData.createdAt,
   lastModified: sessionData.lastModified,
   messageCount: sessionData.messages.length,
-  usage: { input: 0, output: 0, ... },
+  usage: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  },
   modelId: sessionData.model.id,
   thinkingLevel: sessionData.thinkingLevel,
   preview: '',
@@ -390,7 +370,7 @@ const matchingSkills = await storage.skills.getSkillsForUrl('https://mail.google
 
 ```typescript
 const storage = getAppStorage();
-const quota = await storage.backend.getQuotaInfo();
+const quota = await storage.getQuotaInfo();
 
 console.log(`Using ${quota.usage} bytes of ${quota.quota} bytes`);
 console.log(`${quota.percent.toFixed(1)}% full`);
@@ -406,16 +386,16 @@ if (quota.percent > 80) {
 const storage = getAppStorage();
 
 // Prevents browser from evicting data
-const granted = await storage.backend.requestPersistence();
+const granted = await storage.requestPersistence();
 
 if (granted) {
-  console.log('Storage will not be evicted');
+  console.log('Persistent storage was granted');
 } else {
   console.log('User denied persistence request');
 }
 ```
 
-**Note**: Chrome/Edge grant persistence automatically for installed extensions.
+**Note**: Quota and persistence behavior is controlled by the browser; check the returned values rather than assuming a fixed quota or automatic grant.
 
 ### Inspecting IndexedDB
 
@@ -528,16 +508,17 @@ export class DataExporter {
 
 ## Related Files
 
-### Core Storage (web-ui)
-- [types.ts](../../pi-mono/packages/web-ui/src/storage/types.ts) - Interfaces and types
-- [store.ts](../../pi-mono/packages/web-ui/src/storage/store.ts) - Base Store class
-- [app-storage.ts](../../pi-mono/packages/web-ui/src/storage/app-storage.ts) - Base AppStorage
-- [backends/indexeddb-storage-backend.ts](../../pi-mono/packages/web-ui/src/storage/backends/indexeddb-storage-backend.ts) - IndexedDB implementation
+### Core Storage (Sitegeist)
+- [types.ts](../src/storage/types.ts) - Interfaces and types
+- [store.ts](../src/storage/store.ts) - Base Store class
+- [app-storage.ts](../src/storage/app-storage.ts) - AppStorage and SitegeistAppStorage
+- [backends/indexeddb-storage-backend.ts](../src/storage/backends/indexeddb-storage-backend.ts) - IndexedDB implementation
 
-### Store Implementations (web-ui)
-- [stores/settings-store.ts](../../pi-mono/packages/web-ui/src/storage/stores/settings-store.ts)
-- [stores/provider-keys-store.ts](../../pi-mono/packages/web-ui/src/storage/stores/provider-keys-store.ts)
-- [stores/sessions-store.ts](../../pi-mono/packages/web-ui/src/storage/stores/sessions-store.ts)
+### Store Implementations (Sitegeist)
+- [stores/settings-store.ts](../src/storage/stores/settings-store.ts)
+- [stores/provider-keys-store.ts](../src/storage/stores/provider-keys-store.ts)
+- [stores/base-sessions-store.ts](../src/storage/stores/base-sessions-store.ts)
+- [Sitegeist session compatibility reader](../src/storage/stores/sessions-store.ts)
 
 ### Extension Storage (sitegeist)
 - [app-storage.ts](../src/storage/app-storage.ts) - SitegeistAppStorage

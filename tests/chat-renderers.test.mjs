@@ -8,9 +8,9 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { build } from "esbuild";
-import { attachmentBridge } from "../scripts/chat-bridge.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const recorded = JSON.parse(readFileSync(join(root, "tests/fixtures/contracts/chat-renderers.json"), "utf8"));
 let browser;
 let server;
 let origin;
@@ -28,15 +28,9 @@ before(async () => {
 		platform: "browser",
 		format: "esm",
 		plugins: [
-			attachmentBridge(root),
 			{
 				name: "renderer-fixture-sidepanel",
 				setup(build) {
-					build.onResolve({ filter: /^@mariozechner\/pi-ai$/ }, (args) => ({
-						path: /\/pi-mono\/packages\/(agent|ai)\//.test(args.importer)
-							? `${root}../pi-mono/packages/ai/dist/index.js`
-							: `${root}src/pi/models.ts`,
-					}));
 					build.onResolve({ filter: /sidepanel\.js$/ }, (args) =>
 						args.importer.endsWith("/src/utils/format-skills.ts")
 							? { path: `${root}tests/browser/chat-renderers-sidepanel.ts` }
@@ -49,12 +43,8 @@ before(async () => {
 		inject: [`${root}scripts/process-shim.js`],
 		alias: {
 			process: `${root}scripts/process-shim.js`,
-			"@mariozechner/pi-agent-core": `${root}src/pi/agent.ts`,
 			"@mariozechner/mini-lit": `${root}node_modules/@mariozechner/mini-lit`,
 			lit: `${root}node_modules/lit`,
-			"@mariozechner/pi-web-ui/dist/components/MessageList.js": `${root}node_modules/@mariozechner/pi-web-ui/dist/components/MessageList.js`,
-			"@mariozechner/pi-web-ui/dist/components/Messages.js": `${root}node_modules/@mariozechner/pi-web-ui/dist/components/Messages.js`,
-			"@mariozechner/pi-web-ui/dist/components/AttachmentTile.js": `${root}src/attachments/AttachmentTile.ts`,
 		},
 	});
 	server = createServer((request, response) => {
@@ -74,6 +64,7 @@ before(async () => {
 	origin = `http://127.0.0.1:${server.address().port}`;
 	const executablePath =
 		process.env.CHROMIUM_PATH ||
+		(existsSync(chromium.executablePath()) ? chromium.executablePath() : undefined) ||
 		["/usr/local/bin/chromium", "/usr/bin/chromium", "/usr/bin/google-chrome"].find(existsSync);
 	browser = await chromium.launch({ executablePath, headless: true, args: ["--no-sandbox"] });
 });
@@ -92,81 +83,73 @@ async function page() {
 	return page;
 }
 
-test("baseline and local preserve assistant block ordering, paired tools, Markdown and usage", async () => {
+test("recorded contracts preserve assistant block ordering, paired tools, Markdown and usage", async () => {
 	const p = await page();
-	for (const local of [false, true]) {
-		await p.evaluate((local) => window.fixture[local ? "local" : "baseline"](), local);
-		const tag = local ? "sitegeist-assistant-message" : "assistant-message";
-		assert.deepEqual(
-			await p
-				.locator(`${tag} > div > .px-4.flex > *`)
-				.evaluateAll((nodes) => nodes.map((node) => node.tagName.replace("SITEGEIST-", "").toLowerCase())),
-			["thinking-block", "markdown-block", "tool-message", "markdown-block"],
-		);
-		assert.equal(await p.locator("markdown-block strong").innerText(), "tool");
-		assert.equal(await p.locator(local ? "sitegeist-tool-message" : "tool-message").count(), 1);
-		assert.match(await p.locator(`${tag}`).innerText(), /↑120 ↓35 R10 W5 \$0\.0330/);
-		assert.equal(await p.locator("code-block code").last().innerText(), "Result body");
-	}
+	await p.evaluate(() => window.fixture.local());
+	const tag = "sitegeist-assistant-message";
+	assert.deepEqual(
+		await p
+			.locator(`${tag} > div > .px-4.flex > *`)
+			.evaluateAll((nodes) => nodes.map((node) => node.tagName.replace("SITEGEIST-", "").toLowerCase())),
+		["thinking-block", "markdown-block", "tool-message", "markdown-block"],
+	);
+	assert.equal(await p.locator("markdown-block strong").innerText(), "tool");
+	assert.equal(await p.locator("sitegeist-tool-message").count(), 1);
+	assert.match(await p.locator(`${tag}`).innerText(), /↑120 ↓35 R10 W5 \$0\.0330/);
+	assert.equal(await p.locator("code-block code").last().innerText(), "Result body");
 	await p.close();
 });
 
 test("incomplete default renderers and streaming reasoning match measured baseline states", async () => {
 	const p = await page();
 	for (const name of ["bash", "calculate", "get_current_time"]) {
-		for (const args of [
+		for (const [index, args] of [
 			undefined,
 			{},
 			name === "bash" ? { command: "ls" } : name === "calculate" ? { expression: "1+1" } : { timezone: "UTC" },
-		]) {
-			const texts = [];
-			for (const local of [false, true]) {
-				await p.evaluate(
-					({ name, args, local }) =>
-						window.fixture[local ? "localTool" : "tool"]({
-							toolCall: { type: "toolCall", id: "one", name, arguments: args },
-							result: undefined,
-							isStreaming: true,
-						}),
-					{ name, args, local },
-				);
-				texts.push((await p.locator("body").innerText()).replace(/\s+/g, " ").trim());
-			}
+		].entries()) {
+			const texts = [recorded.pending[name][index]];
+			await p.evaluate(
+				({ name, args }) =>
+					window.fixture.localTool({
+						toolCall: { type: "toolCall", id: "one", name, arguments: args },
+						result: undefined,
+						isStreaming: true,
+					}),
+				{ name, args },
+			);
+			texts.push((await p.locator("body").innerText()).replace(/\s+/g, " ").trim());
 			assert.equal(texts[1], texts[0]);
 		}
 	}
-	for (const local of [false, true]) {
-		await p.evaluate((local) => window.fixture.thinking(local, true), local);
-		assert.equal(await p.locator(".animate-shimmer").count(), 1);
-		assert.equal(await p.locator(".thinking-header").getAttribute("tabindex"), null);
-		assert.equal(await p.locator("markdown-block").count(), 0);
-		await p.locator(".thinking-header").click();
-		assert.equal(await p.locator(".thinking-block > markdown-block").count(), 1);
-		assert.equal(await p.locator("markdown-block .italic.text-sm").count(), 1);
-	}
+	await p.evaluate(() => window.fixture.thinking(true));
+	assert.equal(await p.locator(".animate-shimmer").count(), 1);
+	assert.equal(await p.locator(".thinking-header").getAttribute("tabindex"), null);
+	assert.equal(await p.locator("markdown-block").count(), 0);
+	await p.locator(".thinking-header").click();
+	assert.equal(await p.locator(".thinking-block > markdown-block").count(), 1);
+	assert.equal(await p.locator("markdown-block .italic.text-sm").count(), 1);
 	await p.close();
 });
 
 test("tools expose running, success, error and aborted states like baseline", async () => {
 	const p = await page();
 	for (const state of ["pending", "running", "success", "error", "aborted"]) {
-		for (const local of [false, true]) {
-			await p.evaluate(
-				({ state, local }) =>
-					window.fixture[local ? "localTool" : "tool"]({
-						result:
-							state === "success" || state === "error"
-								? { ...window.fixture.result, isError: state === "error" }
-								: undefined,
-						isStreaming: state === "running" || state === "pending",
-						pending: state === "pending",
-						aborted: state === "aborted",
-					}),
-				{ state, local },
-			);
-			assert.equal(await p.locator(".animate-spin").count(), state === "pending" || state === "running" ? 1 : 0);
-			assert.equal(await p.locator(".text-destructive").count(), state === "error" || state === "aborted" ? 1 : 0);
-		}
+		await p.evaluate(
+			({ state }) =>
+				window.fixture.localTool({
+					result:
+						state === "success" || state === "error"
+							? { ...window.fixture.result, isError: state === "error" }
+							: undefined,
+					isStreaming: state === "running" || state === "pending",
+					pending: state === "pending",
+					aborted: state === "aborted",
+				}),
+			{ state },
+		);
+		assert.equal(await p.locator(".animate-spin").count(), state === "pending" || state === "running" ? 1 : 0);
+		assert.equal(await p.locator(".text-destructive").count(), state === "error" || state === "aborted" ? 1 : 0);
 	}
 	await p.close();
 });
@@ -301,35 +284,33 @@ test("built-in tools and JSON mode match baseline rendered text", async () => {
 		["calculate", { expression: "1+1" }],
 		["get_current_time", { timezone: "UTC" }],
 	]) {
-		const texts = [];
-		for (const local of [false, true]) {
-			await p.evaluate(
-				({ name, args, local }) =>
-					window.fixture[local ? "localTool" : "tool"]({
-						toolCall: { type: "toolCall", id: "one", name, arguments: args },
-					}),
-				{ name, args, local },
-			);
-			texts.push((await p.locator("body").innerText()).replace(/\s+/g, " ").trim());
-		}
+		const texts = [recorded.complete.en[name]];
+		await p.evaluate(
+			({ name, args }) =>
+				window.fixture.localTool({
+					toolCall: { type: "toolCall", id: "one", name, arguments: args },
+				}),
+			{ name, args },
+		);
+		texts.push((await p.locator("body").innerText()).replace(/\s+/g, " ").trim());
 		assert.equal(texts[1], texts[0]);
 	}
-	await p.evaluate(() => window.fixture.json(true, true));
+	await p.evaluate(() => window.fixture.json(true));
 	assert.match(await p.locator("body").innerText(), /Tool Call.*Input.*Output/s);
 	assert.equal(await p.locator("sitegeist-console-block").count(), 0);
-	await p.evaluate(() => window.fixture.json(true, false));
+	await p.evaluate(() => window.fixture.json(false));
 	await p.close();
 });
 
 test("header helper expands existing custom renderer max-height content and expandable captures children", async () => {
 	const p = await page();
-	await p.evaluate(() => window.fixture.header(true));
+	await p.evaluate(() => window.fixture.header());
 	await p.locator("button").click();
 	assert.equal(await p.locator(".max-h-0").count(), 0);
 	assert.equal(await p.locator("button").getAttribute("aria-expanded"), "true");
 	await p.locator("button").click();
 	assert.equal(await p.locator(".max-h-0").count(), 1);
-	await p.evaluate(() => window.fixture.expandable(true));
+	await p.evaluate(() => window.fixture.expandable());
 	assert.equal(await p.locator("sitegeist-expandable-section .mt-2").count(), 0);
 	await p.locator("button").click();
 	assert.equal(await p.locator("sitegeist-expandable-section .mt-2").innerText(), "Expanded content");
@@ -381,23 +362,23 @@ test("actual user-pill/navigation/welcome renderers consume local registry and p
 	await p.close();
 });
 
-test("native baseline controller keeps tool cards visible while sequential execution is held", async () => {
+test("native Pi controller preserves the recorded held-tool visibility contract", async () => {
 	const p = await page();
-	await p.evaluate(() => window.fixture.baselineHold());
+	await p.evaluate(() => window.fixture.holdTools());
 	assert.deepEqual(
-		await p.locator("agent-interface").evaluate((controller) => ({
+		await p.locator("sitegeist-agent-interface").evaluate((controller) => ({
 			streaming: controller.session.state.isStreaming,
 			pending: [...controller.session.state.pendingToolCalls],
 		})),
 		{ streaming: true, pending: ["first"] },
 	);
-	assert.equal(await p.locator("tool-message").count(), 2);
-	assert.equal(await p.locator("tool-message .animate-spin").count(), 0);
+	assert.equal(await p.locator("sitegeist-tool-message").count(), 2);
+	assert.equal(await p.locator("sitegeist-tool-message .animate-spin").count(), 0);
 	await p.evaluate(() => window.fixture.releaseHeld());
-	assert.equal(await p.locator("tool-message").count(), 2);
-	assert.equal(await p.locator("tool-message .animate-spin").count(), 0);
+	assert.equal(await p.locator("sitegeist-tool-message").count(), 2);
+	assert.equal(await p.locator("sitegeist-tool-message .animate-spin").count(), 0);
 	await p.evaluate(() => window.fixture.releaseHeld());
-	assert.equal(await p.locator("tool-message .animate-spin").count(), 0);
+	assert.equal(await p.locator("sitegeist-tool-message .animate-spin").count(), 0);
 	await p.evaluate(() =>
 		window.fixture.local({
 			messages: [window.fixture.assistant],
@@ -414,11 +395,9 @@ test("German renderer labels preserve baseline translations and literal thinking
 	const p = await page();
 	await Promise.all([p.waitForEvent("load"), p.evaluate(() => window.fixture.language("de"))]);
 	await p.waitForFunction(() => window.fixture);
-	const bodies = [];
-	for (const local of [false, true]) {
-		await p.evaluate((local) => window.fixture[local ? "local" : "baseline"](), local);
-		bodies.push((await p.locator("body").innerText()).replace(/\s+/g, " ").trim());
-	}
+	const bodies = [recorded.germanBody];
+	await p.evaluate(() => window.fixture.local());
+	bodies.push((await p.locator("body").innerText()).replace(/\s+/g, " ").trim());
 	assert.equal(bodies[1], bodies[0]);
 	assert.match(bodies[1], /Thinking\.\.\..*Tool Call.*Eingabe.*Ausgabe/);
 	for (const [name, args] of [
@@ -426,17 +405,15 @@ test("German renderer labels preserve baseline translations and literal thinking
 		["calculate", { expression: "1+1" }],
 		["get_current_time", { timezone: "UTC" }],
 	]) {
-		const texts = [];
-		for (const local of [false, true]) {
-			await p.evaluate(
-				({ name, args, local }) =>
-					window.fixture[local ? "localTool" : "tool"]({
-						toolCall: { type: "toolCall", id: "one", name, arguments: args },
-					}),
-				{ name, args, local },
-			);
-			texts.push((await p.locator("body").innerText()).replace(/\s+/g, " ").trim());
-		}
+		const texts = [recorded.complete.de[name]];
+		await p.evaluate(
+			({ name, args }) =>
+				window.fixture.localTool({
+					toolCall: { type: "toolCall", id: "one", name, arguments: args },
+				}),
+			{ name, args },
+		);
+		texts.push((await p.locator("body").innerText()).replace(/\s+/g, " ").trim());
 		assert.equal(texts[1], texts[0]);
 	}
 	await p.close();
@@ -453,17 +430,15 @@ test("mixed reasoning/tool layout matches baseline at narrow/wide light/dark vie
 				document.documentElement.classList.toggle("dark", theme === "dark");
 				document.body.style.cssText = "margin:0;background:var(--color-background);color:var(--color-foreground)";
 			}, theme);
-			const layouts = [];
-			for (const local of [false, true]) {
-				await p.evaluate((local) => window.fixture[local ? "local" : "baseline"](), local);
-				await p.locator(".thinking-header").click();
-				await p.waitForTimeout(350);
-				layouts.push(await p.locator(local ? "sitegeist-tool-message" : "tool-message").boundingBox());
-				if (output)
-					await p.screenshot({
-						path: join(output, `renderers-${local ? "after" : "before"}-${theme}-${width}.png`),
-					});
-			}
+			const layouts = [recorded.layout[`${width}-${theme}`]];
+			await p.evaluate(() => window.fixture.local());
+			await p.locator(".thinking-header").click();
+			await p.waitForTimeout(350);
+			layouts.push(await p.locator("sitegeist-tool-message").boundingBox());
+			if (output)
+				await p.screenshot({
+					path: join(output, `renderers-after-${theme}-${width}.png`),
+				});
 			assert.deepEqual(layouts[1], layouts[0]);
 		}
 	}

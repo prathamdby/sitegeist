@@ -1,4 +1,5 @@
 import type { ArtifactMessage } from "../chat/types.js";
+import { artifactsRuntimeDescription } from "../prompts/artifacts.js";
 import type { RuntimeMessage, RuntimeResponse, SandboxRuntimeProvider } from "../sandbox/types.js";
 
 interface ArtifactStore {
@@ -133,10 +134,6 @@ export class ArtifactsRuntimeProvider implements SandboxRuntimeProvider {
 	}
 
 	getDescription(): string {
-		return `### Artifacts Storage
-${this.readWrite ? "Create, read, update, and delete files in artifacts storage. Use it to store intermediate results or generated files; use the artifacts tool for content you author directly." : "Read files from artifacts storage. HTML artifacts have read-only access; creating or modifying artifacts is not available."}
-- listArtifacts() — returns Promise<string[]> of filenames
-- getArtifact(filename) — returns Promise<string | object>; .json files auto-parse, binary files return base64 strings
-${this.readWrite ? "- createOrUpdateArtifact(filename, content, mimeType?) — returns Promise<void>; objects serialize as JSON, binary content requires a base64 string\n- deleteArtifact(filename) — returns Promise<void>" : ""}`;
+		return artifactsRuntimeDescription(this.readWrite);
 	}
 }

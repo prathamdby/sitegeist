@@ -7,6 +7,7 @@ import { createRef, ref } from "lit/directives/ref.js";
 import { X } from "lucide";
 import { AttachmentsRuntimeProvider } from "../attachments/AttachmentsRuntimeProvider.js";
 import type { Agent } from "../pi/agent.js";
+import { ARTIFACTS_TOOL_DESCRIPTION } from "../prompts/artifacts.js";
 import type { SandboxRuntimeProvider } from "../sandbox/types.js";
 import { ArtifactsRuntimeProvider } from "./ArtifactsRuntimeProvider.js";
 import { type ArtifactResult, ArtifactsState, artifactsParamsSchema } from "./ArtifactsState.js";
@@ -39,6 +40,13 @@ export class ArtifactsPanel extends LitElement {
 	}
 	protected override createRenderRoot() {
 		return this;
+	}
+
+	override connectedCallback(): void {
+		super.connectedCallback();
+		this.style.display = "block";
+		this.style.width = "100%";
+		this.style.height = "100%";
 	}
 
 	private providers(): SandboxRuntimeProvider[] {
@@ -77,15 +85,7 @@ export class ArtifactsPanel extends LitElement {
 			name: "artifacts",
 			label: "Artifacts",
 			parameters: artifactsParamsSchema,
-			description: `Create and manage persistent files alongside the conversation. Use this tool to author notes, analysis, Markdown, HTML applications, SVG, text, code and data. Use REPL artifact storage helpers when code processes data or generates binary PDF, DOCX, Excel or image files.
-
-Commands: create(filename, content), update(filename, old_str, new_str), rewrite(filename, content), get(filename), delete(filename), logs(filename). Prefer targeted update over rewriting the entire file. Update replaces the first occurrence of old_str. Binary file content is base64.
-
-HTML artifacts are self-contained interactive documents in an isolated sandbox. Set a background color and use responsive layouts. ES modules from esm.sh and Tailwind CDN are supported. No localStorage/sessionStorage. Artifacts can read other artifacts and user attachments but cannot create or modify them. Downloads embed snapshots for standalone offline use.
-
-${this.providers()
-	.map((provider) => provider.getDescription())
-	.join("\n")}`,
+			description: ARTIFACTS_TOOL_DESCRIPTION(this.providers().map((provider) => provider.getDescription())),
 			execute: async (_id, params): Promise<ArtifactResult> => {
 				const started = Date.now();
 				if (params.command === "logs") {

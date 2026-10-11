@@ -12,6 +12,7 @@ import {
 } from "../chat/renderers/tool-registry.js";
 import type { AgentTool } from "../pi/agent.js";
 import type { ToolResultMessage } from "../pi/models.js";
+import { EXTRACT_DOCUMENT_DESCRIPTION } from "../prompts/attachments.js";
 
 const extractDocumentSchema = Type.Object({
 	url: Type.String({ description: "URL of the document to extract text from (PDF, DOCX, XLSX, or PPTX)" }),
@@ -36,18 +37,7 @@ export function createExtractDocumentTool(): AgentTool<typeof extractDocumentSch
 	const tool: AgentTool<typeof extractDocumentSchema, ExtractDocumentResult> & { corsProxyUrl?: string } = {
 		name: "extract_document",
 		label: "Extract Document",
-		description: `# Extract Document
-
-Extract plain text from documents on the web (PDF, DOCX, XLSX, PPTX).
-
-## When to Use
-User wants you to read a document at a URL.
-
-## Input
-- { url: "https://example.com/document.pdf" } - URL to PDF, DOCX, XLSX, or PPTX
-
-## Returns
-Structured plain text with page/sheet/slide delimiters.`,
+		description: EXTRACT_DOCUMENT_DESCRIPTION,
 		parameters: extractDocumentSchema,
 		async execute(_toolCallId, params, signal) {
 			if (!params.url) throw new Error("URL is required");

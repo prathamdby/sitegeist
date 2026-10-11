@@ -1,5 +1,6 @@
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { setLanguage } from "@mariozechner/mini-lit";
+import "../../src/utils/i18n-extension.js";
 import type { Attachment } from "../../src/attachments/types.js";
 import { ChatPanel } from "../../src/chat/ChatPanel.js";
 import { Agent } from "../../src/pi/agent.js";
@@ -13,6 +14,8 @@ let releaseStream: () => void = () => {};
 let holdStream = false;
 let delayStreamStart = false;
 let releaseStreamStart: () => void = () => {};
+let releaseAgentEnd: () => void = () => {};
+let agentEndHeld = false;
 const agent = new Agent({
 	initialState: {
 		model,
@@ -93,6 +96,24 @@ const fixture = {
 	},
 	releaseStream() {
 		releaseStream();
+	},
+	holdAgentEnd() {
+		const release = new Promise<void>((resolve) => {
+			releaseAgentEnd = resolve;
+		});
+		const unsubscribe = agent.subscribe(async (event) => {
+			if (event.type !== "agent_end") return;
+			agentEndHeld = true;
+			await release;
+			agentEndHeld = false;
+			unsubscribe();
+		});
+	},
+	releaseAgentEnd() {
+		releaseAgentEnd();
+	},
+	get agentEndHeld() {
+		return agentEndHeld;
 	},
 	async keyDenied() {
 		await storage.providerKeys.delete("anthropic");

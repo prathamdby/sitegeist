@@ -2,27 +2,18 @@
 
 ## Overview
 
-Custom message types enable specialized UI elements in the chat with flexible LLM transformation. Messages can be UI-only, transformed for the LLM, or passed through as-is.
+Sitegeist extends Pi agent messages with application-owned roles, renders them through its local Lit renderer registry, and explicitly decides what reaches the model in `browserMessageTransformer`. Message typing, UI rendering, and model conversion are separate contracts.
 
 ## Core Concepts
 
 ### Message Types
 
-**AppMessage**: Union of all message types (standard + custom)
-```typescript
-type BaseMessage = AssistantMessage | UserMessage | ToolResultMessage | ArtifactMessage;
-
-export interface CustomMessages {
-  // Apps extend via declaration merging
-}
-
-export type AppMessage = BaseMessage | CustomMessages[keyof CustomMessages];
-```
+`AgentMessage` is the Pi agent-core message union extended by declaration merging through `CustomAgentMessages`. Sitegeist declares its roles beside their implementation.
 
 **Extending**: Add custom types via declaration merging
 ```typescript
-declare module "@mariozechner/pi-web-ui" {
-  interface CustomMessages {
+declare module "@earendil-works/pi-agent-core" {
+  interface CustomAgentMessages {
     welcome: WelcomeMessage;
     navigation: NavigationMessage;
   }
@@ -34,7 +25,7 @@ declare module "@mariozechner/pi-web-ui" {
 ```
 User Action
     ↓
-Create AppMessage
+Create AgentMessage
     ↓
 agent.appendMessage()
     ↓
@@ -52,10 +43,12 @@ export interface NavigationMessage {
   url: string;
   title: string;
   favicon?: string;
+  tabId?: number;
+  skillsOutput: string;
 }
 
-declare module "@mariozechner/pi-web-ui" {
-  interface CustomMessages {
+declare module "@earendil-works/pi-agent-core" {
+  interface CustomAgentMessages {
     navigation: NavigationMessage;
   }
 }
@@ -68,6 +61,7 @@ declare module "@mariozechner/pi-web-ui" {
 class NavigationMessageElement extends LitElement {
   @property() url!: string;
   @property() title!: string;
+  @property() favicon?: string;
 
   protected createRenderRoot() {
     return this; // Light DOM for shared styles
@@ -93,6 +87,8 @@ class NavigationMessageElement extends LitElement {
 
 **Simple (no agent access)**:
 ```typescript
+import type { MessageRenderer } from "../chat/renderers/index.js";
+
 const navigationRenderer: MessageRenderer<NavigationMessage> = {
   render: (msg) => html`<navigation-message
     .url=${msg.url}
@@ -102,17 +98,16 @@ const navigationRenderer: MessageRenderer<NavigationMessage> = {
 };
 ```
 
-**With agent access (conditional rendering)**:
+**With app access (the welcome-message pattern)**:
 ```typescript
-function createNavigationRenderer(agent: Agent): MessageRenderer<NavigationMessage> {
+function createWelcomeRenderer(agent: Agent, agentInterface: AgentInterface): MessageRenderer<WelcomeMessage> {
   return {
-    render: (msg) => {
-      const messageCount = agent.state.messages.length;
-      return html`<navigation-message
-        .url=${msg.url}
-        .messageCount=${messageCount}>
-      </navigation-message>`;
-    },
+    render: (message) => html`<welcome-message
+      .tutorials=${message.tutorials}
+      .agent=${agent}
+      .agentInterface=${agentInterface}
+      .message=${message}>
+    </welcome-message>`,
   };
 }
 ```
@@ -120,35 +115,16 @@ function createNavigationRenderer(agent: Agent): MessageRenderer<NavigationMessa
 ### 4. Register Renderer
 
 ```typescript
-import { registerMessageRenderer } from "@mariozechner/pi-web-ui";
+import { registerMessageRenderer } from "../chat/renderers/index.js";
 
 registerMessageRenderer("navigation", navigationRenderer);
 ```
 
-### 5. Transform for LLM
+### 5. Transform for the Model
 
-**Filter (UI-only)**:
-```typescript
-if (m.role === "welcome") continue; // Don't send to LLM
-```
+`src/messages/message-transformer.ts` owns the current conversion contract. It filters `artifact` and `welcome`, converts `navigation` to browser-context user text using the message's frozen skills snapshot, and converts `user-with-attachments` to user text/image content. System, user, assistant, and tool-result messages pass through; other custom roles are skipped unless the transformer explicitly handles them. Tool-call results are reordered next to their matching assistant call.
 
-**Transform (modify for LLM)**:
-```typescript
-if (m.role === "navigation") {
-  transformed.push({
-    role: "user",
-    content: `<browser-context>Navigated to ${nav.url}</browser-context>`,
-  } as Message);
-}
-```
-
-**Pass-through (send as-is)**:
-```typescript
-if (m.role === "user" || m.role === "assistant") {
-  const { attachments, ...rest } = m as any;
-  transformed.push(rest as Message);
-}
-```
+When adding a custom role, update this transformer separately from the UI renderer. Choose whether it is UI-only, converted to a model-supported message, or passed through as a valid Pi message. Never forward an application-only role unchanged or cast it to the model message type.
 
 ## Patterns
 
@@ -192,19 +168,18 @@ const renderer = {
   render: (msg) => html`<navigation-message .url=${msg.url} .title=${msg.title} />`,
 };
 
-// Transformer converts to user message
+// The message stores the formatted skill snapshot from navigation time.
 if (m.role === "navigation") {
-  const skills = await skillsStore.getSkillsForUrl(m.url);
-  const skillsInfo = skills.length > 0
-    ? `\n\nSkills: ${skills.map(s => s.name).join(", ")}`
-    : "";
-
+  const tabInfo = m.tabId !== undefined ? ` (tab id: ${m.tabId})` : "";
   transformed.push({
     role: "user",
-    content: `<browser-context>Navigated to ${m.url}${skillsInfo}</browser-context>`,
+    content: `<browser-context>Navigation succeeded: ${m.title}${tabInfo}\nURL: ${m.url}\n${m.skillsOutput}</browser-context>`,
+    timestamp: Date.now(),
   });
 }
 ```
+
+`createNavigationMessage()` captures matching skills when the navigation message is created; the transformer does not re-query the skills store.
 
 ## Event-Based Actions
 
@@ -238,26 +213,26 @@ document.addEventListener("tutorial-selected", (e: CustomEvent) => {
 - Store minimal data in messages (they persist in session storage)
 - Use factory pattern for renderers needing agent state
 - Use DOM events for actions requiring `agentInterface`
-- Filter UI-only messages in transformer
+- Filter UI-only messages in `browserMessageTransformer`
 - Load async data in `connectedCallback()`
 - Make transformer async if needed
 
 ### ❌ DON'T
 - Store callbacks in messages (won't persist)
-- Send custom roles directly to LLM (won't understand)
-- Access agent from custom elements (no injection)
+- Send custom roles directly to the model unless the transformer converts them
+- Store DOM objects in persisted messages; pass controllers through a renderer factory or use bubbling DOM events
+- Assume custom elements cannot receive app references: `WelcomeMessage` supplies its agent and interface through renderer-created properties
 - Forget to register renderers before messages appear
 
 ## Files
 
 **Core:**
-- `pi-mono/packages/web-ui/src/components/Messages.ts` - Message types
-- `pi-mono/packages/web-ui/src/components/MessageList.ts` - Rendering
-- `pi-mono/packages/web-ui/src/components/message-renderer-registry.ts` - Registration
-- `pi-mono/packages/web-ui/src/agent/agent.ts` - Transformation
+- `src/chat/renderers/Messages.ts` and `src/chat/renderers/MessageList.ts` - Message rendering
+- `src/chat/renderers/message-registry.ts` - Local renderer registration
+- `src/messages/message-transformer.ts` - Model conversion
 
 **Examples:**
-- `sitegeist/src/messages/NavigationMessage.ts` - Navigation message
-- `sitegeist/src/messages/WelcomeMessage.ts` - UI-only message
-- `sitegeist/src/message-transformer.ts` - Message transformation
-- `sitegeist/src/sidepanel.ts` - Agent setup and event handling
+- `src/messages/NavigationMessage.ts` - Navigation message
+- `src/messages/WelcomeMessage.ts` - UI-only message
+- `src/messages/message-transformer.ts` - Message transformation
+- `src/sidepanel.ts` - Agent setup and event handling

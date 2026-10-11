@@ -1,7 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { i18n } from "@mariozechner/mini-lit";
 import { Badge } from "@mariozechner/mini-lit/dist/Badge.js";
-import "@mariozechner/pi-web-ui/dist/components/CustomProviderCard.js";
 import { html, LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { ArtifactsPanel } from "../artifacts/ArtifactsPanel.js";

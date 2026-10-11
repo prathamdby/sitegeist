@@ -1,0 +1,20 @@
+{
+	"wide-light": {
+		"x": 224,
+		"y": 676,
+		"width": 752,
+		"height": 104
+	},
+	"narrow-light": {
+		"x": 8,
+		"y": 676,
+		"width": 374,
+		"height": 104
+	},
+	"wide-dark": {
+		"x": 224,
+		"y": 676,
+		"width": 752,
+		"height": 104
+	}
+}

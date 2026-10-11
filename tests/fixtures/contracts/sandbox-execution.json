@@ -1,0 +1,115 @@
+{
+	"console": [
+		{
+			"type": "log",
+			"text": "log {\"value\":7}",
+			"args": [
+				"log",
+				{
+					"value": 7
+				}
+			]
+		},
+		{
+			"type": "warn",
+			"text": "warn",
+			"args": ["warn"]
+		},
+		{
+			"type": "info",
+			"text": "info",
+			"args": ["info"]
+		},
+		{
+			"type": "error",
+			"text": "error",
+			"args": ["error"]
+		}
+	],
+	"returnValue": 14,
+	"callbacks": {
+		"success": true,
+		"console": [
+			{
+				"type": "log",
+				"text": "14",
+				"args": [14]
+			}
+		],
+		"files": [],
+		"returnValue": 21
+	},
+	"callbackErrors": [
+		{
+			"success": true,
+			"console": [
+				{
+					"type": "error",
+					"text": "Completion callback error: {}",
+					"args": [
+						"Completion callback error:",
+						{
+							"name": "Error",
+							"message": "callback"
+						}
+					]
+				}
+			],
+			"files": [],
+			"returnValue": 9
+		},
+		{
+			"success": true,
+			"console": [
+				{
+					"type": "error",
+					"text": "Completion callback error: {}",
+					"args": [
+						"Completion callback error:",
+						{
+							"name": "Error",
+							"message": "async callback"
+						}
+					]
+				}
+			],
+			"files": [],
+			"returnValue": 9
+		}
+	],
+	"files": {
+		"success": true,
+		"console": [],
+		"files": [
+			{
+				"fileName": "bytes.bin",
+				"content": {
+					"0": 0,
+					"1": 1,
+					"2": 254,
+					"3": 255
+				},
+				"mimeType": "application/octet-stream"
+			},
+			{
+				"fileName": "text.txt",
+				"content": "héllo",
+				"mimeType": "text/plain"
+			}
+		],
+		"returnValue": "restored text:0,1,254,255"
+	},
+	"explicit": {
+		"success": true,
+		"console": [],
+		"files": [],
+		"returnValue": 9
+	},
+	"explicitError": {
+		"success": false,
+		"error": {
+			"name": "Error",
+			"message": "explicit"
+		}
+	}
+}

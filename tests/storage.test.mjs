@@ -10,12 +10,6 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { build } from "esbuild";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import Fuse from "fuse.js";
-import { IndexedDBStorageBackend as OldBackend } from "../node_modules/@mariozechner/pi-web-ui/dist/storage/backends/indexeddb-storage-backend.js";
-import { CustomProvidersStore as OldProviders } from "../node_modules/@mariozechner/pi-web-ui/dist/storage/stores/custom-providers-store.js";
-import { ProviderKeysStore as OldKeys } from "../node_modules/@mariozechner/pi-web-ui/dist/storage/stores/provider-keys-store.js";
-import { SessionsStore as OldSessions } from "../node_modules/@mariozechner/pi-web-ui/dist/storage/stores/sessions-store.js";
-import { SettingsStore as OldSettings } from "../node_modules/@mariozechner/pi-web-ui/dist/storage/stores/settings-store.js";
-import { storageBridge } from "../scripts/storage-bridge.mjs";
 import { browserMessageTransformer } from "../src/messages/message-transformer.ts";
 import { Agent } from "../src/pi/agent.ts";
 import { getModel } from "../src/pi/models.ts";
@@ -355,7 +349,7 @@ test("writes, renames and deletes abort together and resolve only after transact
 	assert.equal(await storage.sessions.get("invalid"), null);
 });
 
-test("Wave 1 readers can reopen every new record without a schema upgrade", async () => {
+test("independent version-3 reader can reopen every new record without a schema upgrade", async () => {
 	const storage = await fixture();
 	const passedMetadata = {
 		...metadata,
@@ -398,30 +392,25 @@ test("Wave 1 readers can reopen every new record without a schema upgrade", asyn
 	await storage.customProviders.set({ ...provider, id: "new-custom" });
 	await storage.skills.saveSkill({ ...skill, name: "new-skill" });
 	await storage.costs.recordCost("fixture", "historic-custom", 2);
-	const oldBackend = new OldBackend({ dbName: "sitegeist-storage", version: 3, stores: schema });
-	const oldSessions = new OldSessions();
-	const oldSettings = new OldSettings();
-	const oldKeys = new OldKeys();
-	const oldProviders = new OldProviders();
-	for (const store of [oldSessions, oldSettings, oldKeys, oldProviders]) store.setBackend(oldBackend);
-	const saved = await oldSessions.loadSession("saved");
+	const db = await requestResult(indexedDB.open("sitegeist-storage", 3));
+	const readRecord = (store, key) => requestResult(db.transaction(store, "readonly").objectStore(store).get(key));
+	const saved = await readRecord("sessions", "saved");
 	assert.equal(saved.title, "Saved title");
 	assert.deepEqual(saved.model, model);
 	assert.deepEqual(saved.messages, messages);
 	assert.equal(saved.createdAt, data.createdAt);
-	assert.deepEqual(await oldSessions.getMetadata("saved"), passedMetadata);
-	assert.equal((await oldSessions.loadSession("no-metadata")).title, "");
-	assert.deepEqual(await oldSessions.getMetadata("no-metadata"), stub);
-	assert.deepEqual(await oldSettings.get("new-setting"), { arbitrary: [true, 3] });
-	assert.equal(await oldKeys.get("new-provider"), oauth);
-	assert.deepEqual(await oldProviders.get("new-custom"), { ...provider, id: "new-custom" });
-	assert.deepEqual(await oldBackend.get("skills", "new-skill"), { ...skill, name: "new-skill" });
+	assert.deepEqual(await readRecord("sessions-metadata", "saved"), passedMetadata);
+	assert.equal((await readRecord("sessions", "no-metadata")).title, "");
+	assert.deepEqual(await readRecord("sessions-metadata", "no-metadata"), stub);
+	assert.deepEqual(await readRecord("settings", "new-setting"), { arbitrary: [true, 3] });
+	assert.equal(await readRecord("provider-keys", "new-provider"), oauth);
+	assert.deepEqual(await readRecord("custom-providers", "new-custom"), { ...provider, id: "new-custom" });
+	assert.deepEqual(await readRecord("skills", "new-skill"), { ...skill, name: "new-skill" });
 	assert.equal(
-		(await oldBackend.get("daily_costs", new Date().toISOString().slice(0, 10))).byProvider.fixture[
-			"historic-custom"
-		],
+		(await readRecord("daily_costs", new Date().toISOString().slice(0, 10))).byProvider.fixture["historic-custom"],
 		2,
 	);
+	db.close();
 	const reopened = new SitegeistAppStorage();
 	assert.equal((await reopened.sessions.get("saved")).title, "Saved title");
 });
@@ -460,7 +449,7 @@ test("unwired stores fail explicitly; quota and persistence forward browser capa
 	delete globalThis.navigator.storage;
 });
 
-test("legacy UI accessor resolves to the same application-owned singleton in the browser bundle", async () => {
+test("browser bundle uses one application-owned storage singleton and the local sessions class", async () => {
 	const outdir = join(homedir(), ".capy/work/storage-tests");
 	await mkdir(outdir, { recursive: true });
 	await mkdir(join(outdir, "unrelated/storage"), { recursive: true });
@@ -469,11 +458,11 @@ test("legacy UI accessor resolves to the same application-owned singleton in the
 	const outfile = join(outdir, "bridge.mjs");
 	const result = await build({
 		stdin: {
-			contents: `import { getAppStorage as legacyGet } from '@mariozechner/pi-web-ui/dist/storage/app-storage.js';
-			import { SessionsStore as LegacySessions } from '@mariozechner/pi-web-ui/dist/storage/stores/sessions-store.js';
+			contents: `import { getSitegeistStorage as sharedGet } from './src/storage/app-storage.ts';
+			import { SessionsStore as LocalSessions } from './src/storage/stores/base-sessions-store.ts';
 			import { unrelated } from ${JSON.stringify(unrelated)};
 			import { SitegeistAppStorage, getAppStorage, setAppStorage } from './src/storage/app-storage.ts';
-			export { legacyGet, getAppStorage, setAppStorage, SitegeistAppStorage, LegacySessions, unrelated };`,
+			export { sharedGet, getAppStorage, setAppStorage, SitegeistAppStorage, LocalSessions, unrelated };`,
 			resolveDir: process.cwd(),
 		},
 		outfile,
@@ -481,10 +470,9 @@ test("legacy UI accessor resolves to the same application-owned singleton in the
 		platform: "browser",
 		format: "esm",
 		metafile: true,
-		plugins: [storageBridge(process.cwd())],
 	});
 	assert.equal(
-		Object.keys(result.metafile.inputs).some((path) => /web-ui\/.*storage\//.test(path)),
+		Object.keys(result.metafile.inputs).some((path) => /node_modules\/.*storage\//.test(path)),
 		false,
 	);
 	assert.ok((await readFile(outfile, "utf8")).includes("sitegeist-storage"));
@@ -500,14 +488,14 @@ test("legacy UI accessor resolves to the same application-owned singleton in the
 		globalThis.indexedDB = indexedDB;
 		globalThis.IDBKeyRange = IDBKeyRange;
 		const shared = new bundle.SitegeistAppStorage();
-		assert.ok(shared.sessions instanceof bundle.LegacySessions);
+		assert.ok(shared.sessions instanceof bundle.LocalSessions);
 		assert.equal(bundle.unrelated, 'unchanged');
 		bundle.setAppStorage(shared);
-		assert.equal(bundle.legacyGet(), bundle.getAppStorage());
-		assert.equal(bundle.legacyGet().backend, shared.backend);
-		await bundle.legacyGet().settings.set('via-legacy-ui', true);
-		assert.equal(await shared.settings.get('via-legacy-ui'), true);
-		assert.equal(await new bundle.SitegeistAppStorage().settings.get('via-legacy-ui'), true);
+		assert.equal(bundle.sharedGet(), bundle.getAppStorage());
+		assert.equal(bundle.sharedGet().backend, shared.backend);
+		await bundle.sharedGet().settings.set('via-local-ui', true);
+		assert.equal(await shared.settings.get('via-local-ui'), true);
+		assert.equal(await new bundle.SitegeistAppStorage().settings.get('via-local-ui'), true);
 	`,
 	]);
 });

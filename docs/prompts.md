@@ -4,7 +4,7 @@
 
 This document describes the current architecture of prompts, tool descriptions, and runtime provider descriptions. Use this as a reference for understanding how prompts work and as a guide for adding new tools or modifying existing ones.
 
-**Current State**: All runtime providers and tool descriptions have been optimized following consistent patterns. Total agent setup uses ~7,555 tokens (42% reduction from original ~13,034 tokens).
+**Current implementation**: Tool prompts and provider descriptions live in `src/prompts/`; the sandbox-provider interface and execution machinery are local under `src/sandbox/`. No prompt or runtime-provider implementation is supplied by an external UI package.
 
 ## Core Concepts
 
@@ -17,11 +17,12 @@ Tools are capabilities that the LLM can invoke. Each tool has:
 - **Execute**: Function that runs when the tool is called
 
 ### 2. Runtime Providers
-Runtime providers inject special functions into sandboxed execution environments. Each provider implements the `SandboxRuntimeProvider` interface with:
-- **getData()**: Returns data to inject into `window` scope
-- **getRuntime()**: Returns a function that will be stringified and executed in the sandbox to define helper functions
-- **handleMessage()**: Optional bidirectional communication handler
-- **getDescription()**: Returns documentation describing what functions this provider makes available
+Runtime providers inject special functions into sandboxed execution environments. Each provider implements the local `SandboxRuntimeProvider` interface in `src/sandbox/types.ts`:
+- **getData()**: Returns a `Record<string, unknown>` injected into the sandbox window.
+- **getRuntime()**: Returns a function that is serialized into the sandbox to define helper functions.
+- **getDescription()**: Returns model-facing documentation for those functions.
+- **handleMessage()**: Optional asynchronous handler for runtime requests.
+- **onExecutionStart() / onExecutionEnd()**: Optional lifecycle hooks; `onExecutionStart()` can receive an abort signal.
 
 ### 3. Tool Descriptions with Provider Injection
 Tool descriptions are **template functions** that accept an array of runtime provider descriptions and inject them into the appropriate location:
@@ -69,118 +70,54 @@ The descriptions from runtime providers are **dynamically injected** so the LLM 
 
 ## Current Prompts
 
-### Web-UI Prompts
-**File**: `/Users/badlogic/workspaces/pi-mono/packages/web-ui/src/prompts/prompts.ts`
+### Local Prompt Modules
 
-Shared prompts and runtime provider descriptions:
-
-**Tool Descriptions** (template functions accepting `runtimeProviderDescriptions: string[]`):
-- `JAVASCRIPT_REPL_TOOL_DESCRIPTION` - Generic JavaScript REPL tool
-- `ARTIFACTS_TOOL_DESCRIPTION` - Artifacts management (create/update/rewrite/get/delete/htmlArtifactLogs)
-
-**Runtime Provider Descriptions**:
-- `ARTIFACTS_RUNTIME_PROVIDER_DESCRIPTION_RW` - Read-write artifact functions: `listArtifacts()`, `getArtifact()`, `createOrUpdateArtifact()`, `deleteArtifact()`
-- `ARTIFACTS_RUNTIME_PROVIDER_DESCRIPTION_RO` - Read-only artifact access (for HTML artifacts)
-- `ATTACHMENTS_RUNTIME_DESCRIPTION` - User attachment access: `listAttachments()`, `readTextAttachment()`, `readBinaryAttachment()`
-- `EXTRACT_DOCUMENT_DESCRIPTION` - Extract text from PDF/DOCX/XLSX/PPTX
-
-### Sitegeist Prompts
-**File**: `/Users/badlogic/workspaces/sitegeist/src/prompts/prompts.ts`
-
-Sitegeist-specific prompts:
-
-**System Prompt**:
-- `SYSTEM_PROMPT` - Main agent identity, tone, workflows
-
-**Tool Descriptions**:
-- `REPL_TOOL_DESCRIPTION(runtimeProviderDescriptions)` - REPL with browserjs()/navigate()
-- `SKILL_TOOL_DESCRIPTION` - Skill management (get/list/create/update/rewrite/delete)
-- `NAVIGATE_TOOL_DESCRIPTION` - Navigate to URLs in tabs
-- `ASK_USER_WHICH_ELEMENT_DESCRIPTION` - Element picker
-
-**Runtime Provider Descriptions**:
-- `BROWSERJS_RUNTIME_DESCRIPTION` - `browserjs()` for page context execution
-- `NAVIGATE_RUNTIME_DESCRIPTION` - `navigate()` helper function (available in REPL code, not in functions passed to browserjs())
-- `NATIVE_INPUT_EVENTS_DESCRIPTION` - Trusted events: `nativeClick()`, `nativeType()`, `nativePress()`, `nativeKeyDown()`, `nativeKeyUp()`
+`src/prompts/prompts.ts` defines `SYSTEM_PROMPT`, descriptions for `repl`, `skill`, `navigate`, and `ask_user_which_element`, plus descriptions for browser JavaScript, navigation, and trusted native-input helpers. Reusable descriptions are in nearby local modules: `src/prompts/attachments.ts` describes attachment helpers, and `src/prompts/artifacts.ts` describes the artifacts tool and its read/write runtime APIs. `src/tools/extract-document.ts` owns the document-extraction tool description and behavior.
 
 ## Implementation Details
 
 ### How Runtime Providers Work
 
 #### 1. Provider Implementation
-Example from `ArtifactsRuntimeProvider.ts`:
+
+`ArtifactsRuntimeProvider` in `src/artifacts/ArtifactsRuntimeProvider.ts` returns a serializable artifact snapshot, installs sandbox helpers, documents them via `getDescription()`, and handles artifact-operation messages. Its read-only mode documents reads only and rejects write/delete requests in the message handler; the helper functions still exist in the sandbox. The local interface is:
 
 ```typescript
-export class ArtifactsRuntimeProvider implements SandboxRuntimeProvider {
-    getData(): Record<string, any> {
-        // Data to inject into window scope
-        return { artifacts: snapshot };
-    }
-
-    getRuntime(): (sandboxId: string) => void {
-        // This function is stringified and executed in sandbox
-        return (_sandboxId: string) => {
-            (window as any).listArtifacts = async () => { ... };
-            (window as any).getArtifact = async (filename: string) => { ... };
-            // etc.
-        };
-    }
-
-    handleMessage(message: any, respond: (response: any) => void) {
-        // Handle bidirectional communication
-    }
-
-    getDescription(): string {
-        return ARTIFACTS_RUNTIME_PROVIDER_DESCRIPTION;
-    }
+interface SandboxRuntimeProvider {
+  getData(): Record<string, unknown>;
+  getRuntime(): (sandboxId: string) => void;
+  getDescription(): string;
+  handleMessage?(message: RuntimeMessage, respond: (response: RuntimeResponse) => void): Promise<void>;
+  onExecutionStart?(sandboxId: string, signal?: AbortSignal): void;
+  onExecutionEnd?(sandboxId: string): void;
 }
 ```
 
 #### 2. Tool Registration with Provider Injection
-Example from `artifacts.ts:242-254`:
+`createReplTool()` in `src/tools/repl/repl.ts` uses a description getter. `ArtifactsPanel.get tool()` in `src/artifacts/ArtifactsPanel.ts` builds the artifact description from its current providers.
 
 ```typescript
-public get tool(): AgentTool<typeof artifactsParamsSchema, undefined> {
-    const self = this;
-    return {
-        label: "Artifacts",
-        name: "artifacts",
-        get description() {
-            // Dynamically get provider descriptions
-            const runtimeProviderDescriptions =
-                self.runtimeProvidersFactory?.()
-                    .map((d) => d.getDescription())
-                    .filter((d) => d.trim().length > 0) || [];
-            // Inject into template
-            return ARTIFACTS_TOOL_DESCRIPTION(runtimeProviderDescriptions);
-        },
-        parameters: artifactsParamsSchema,
-        execute: async (...) => { ... }
-    };
-}
+description: ARTIFACTS_TOOL_DESCRIPTION(
+  this.providers().map((provider) => provider.getDescription()),
+),
 ```
 
-The `description` property is a **getter** that:
-1. Calls `runtimeProvidersFactory()` to get all providers
-2. Maps each provider to its `getDescription()` output
-3. Filters out empty descriptions
-4. Passes array to the template function
+The REPL description getter calls its `runtimeProvidersFactory()`, collects non-empty `getDescription()` values, and passes them to `REPL_TOOL_DESCRIPTION`. The artifacts tool computes its description from the providers created by the panel. Keep the prompt text and provider list aligned so the model is told only about helpers available in that execution context.
 
 #### 3. Provider Composition in Sidepanel
-Example from `sidepanel.ts:320-332`:
+`src/sidepanel.ts` composes providers for the REPL:
 
 ```typescript
 replTool.runtimeProvidersFactory = () => {
-    // Providers available in page context via browserjs()
     const pageProviders = [
-        ...runtimeProvidersFactory(), // attachments + artifacts from ChatPanel
-        new NativeInputEventsRuntimeProvider(), // trusted browser events
+        ...runtimeProvidersFactory(),
+        new NativeInputEventsRuntimeProvider(),
     ];
 
     return [
-        ...pageProviders, // Available in REPL context too
-        new BrowserJsRuntimeProvider(pageProviders), // Page context orchestration
-        new NavigateRuntimeProvider(navigateTool), // Navigation helper
+        ...pageProviders,
+        new BrowserJsRuntimeProvider(pageProviders),
+        new NavigateRuntimeProvider(navigateTool),
     ];
 };
 ```
@@ -196,8 +133,9 @@ This composition ensures:
 1. Provider defines getDescription()
    └─> Returns description string
 
-2. Tool's runtimeProvidersFactory() returns provider instances
-   └─> Called when tool.description getter is accessed
+2. The tool creates or obtains provider instances
+   └─> REPL calls its provider factory when its description getter runs
+   └─> ArtifactsPanel supplies providers while constructing its tool
 
 3. Tool description getter collects descriptions
    └─> Calls getDescription() on each provider
@@ -310,8 +248,8 @@ For tools that manipulate content (artifacts, skills), use consistent action nam
 ### When Adding a New Tool
 
 1. **Choose the right location**:
-   - Shared/reusable tools → `/Users/badlogic/workspaces/pi-mono/packages/web-ui/src/prompts/prompts.ts`
-   - Sitegeist-specific tools → `/Users/badlogic/workspaces/sitegeist/src/prompts/prompts.ts`
+   - Sitegeist tool prompts → `src/prompts/prompts.ts` or the focused local description module for that tool.
+   - Runtime helper descriptions → the `src/prompts/` module imported by their provider.
 
 2. **Follow the tool description pattern** (see above)
 
@@ -328,8 +266,8 @@ For tools that manipulate content (artifacts, skills), use consistent action nam
 
 1. **Implement the provider class**:
    - Implement `SandboxRuntimeProvider` interface
-   - Define `getData()`, `getRuntime()`, optional `handleMessage()`
-   - Define `getDescription()` returning your provider description
+   - Implement the required `getData()`, `getRuntime()`, and `getDescription()` methods from `src/sandbox/types.ts`.
+   - Add `handleMessage()` or execution lifecycle hooks only when the provider needs them.
 
 2. **Write the provider description** following the pattern above
 
@@ -368,23 +306,25 @@ After updating prompts:
 ### Key Files
 
 **Interfaces**:
-- `/Users/badlogic/workspaces/pi-mono/packages/web-ui/src/components/sandbox/SandboxRuntimeProvider.ts` - Provider interface
+- [Sandbox provider and message contracts](../src/sandbox/types.ts)
 
 **Prompt Definitions**:
-- `/Users/badlogic/workspaces/pi-mono/packages/web-ui/src/prompts/prompts.ts` - Shared prompts and providers
-- `/Users/badlogic/workspaces/sitegeist/src/prompts/prompts.ts` - Sitegeist-specific prompts
+- [System and core tool prompts](../src/prompts/prompts.ts)
+- [Attachment helper description](../src/prompts/attachments.ts)
+- [Artifact tool and runtime descriptions](../src/prompts/artifacts.ts)
 
 **Provider Implementations**:
-- `/Users/badlogic/workspaces/pi-mono/packages/web-ui/src/components/sandbox/ArtifactsRuntimeProvider.ts` - Artifacts provider
-- `/Users/badlogic/workspaces/sitegeist/src/tools/NativeInputEventsRuntimeProvider.ts` - Native events provider
-- `/Users/badlogic/workspaces/sitegeist/src/tools/repl/runtime-providers.ts` - BrowserJs and Navigate providers
+- [Artifacts provider](../src/artifacts/ArtifactsRuntimeProvider.ts)
+- [Attachments provider](../src/attachments/AttachmentsRuntimeProvider.ts)
+- [Native input events provider](../src/tools/NativeInputEventsRuntimeProvider.ts)
+- [BrowserJS and navigate providers](../src/tools/repl/runtime-providers.ts)
 
 **Tool Implementations**:
-- `/Users/badlogic/workspaces/pi-mono/packages/web-ui/src/tools/artifacts/artifacts.ts` - Artifacts tool
-- `/Users/badlogic/workspaces/sitegeist/src/tools/repl/repl.ts` - REPL tool
+- [Artifacts tool composition](../src/artifacts/ArtifactsPanel.ts)
+- [REPL tool](../src/tools/repl/repl.ts)
 
 **Integration**:
-- `/Users/badlogic/workspaces/sitegeist/src/sidepanel.ts` - Tool and provider composition
+- [Agent, tool, and provider composition](../src/sidepanel.ts)
 
 ### Related Documentation
 - `docs/tool-renderers.md` - How tool invocations are rendered in UI

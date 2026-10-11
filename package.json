@@ -26,7 +26,6 @@
 		"@lmstudio/sdk": "1.5.0",
 		"@mariozechner/jailjs": "^0.1.0",
 		"@mariozechner/mini-lit": "0.2.1",
-		"@mariozechner/pi-web-ui": "file:../pi-mono/packages/web-ui",
 		"chart.js": "^4.5.1",
 		"docx-preview": "^0.3.7",
 		"fuse.js": "^7.1.0",

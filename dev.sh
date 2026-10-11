@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-if [ ! -d "../pi-mono/packages/web-ui/dist" ]; then
-    echo "Error: pinned legacy pi-web-ui is not built; run the project Setup first."
+if [ ! -x "node_modules/.bin/esbuild" ] || [ ! -x "node_modules/.bin/tailwindcss" ]; then
+    echo "Error: extension dependencies are missing; run npm ci first."
     exit 1
 fi
 

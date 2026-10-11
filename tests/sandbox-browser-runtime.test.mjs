@@ -9,9 +9,6 @@ import { runInNewContext } from "node:vm";
 import { chromium } from "@playwright/test";
 import { build } from "esbuild";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
-import { chatBridge } from "../scripts/chat-bridge.mjs";
-import { settingsBridge } from "../scripts/settings-bridge.mjs";
-import { storageBridge } from "../scripts/storage-bridge.mjs";
 import { RuntimeMessageBridge } from "../src/sandbox/RuntimeMessageBridge.ts";
 import { RUNTIME_MESSAGE_ROUTER } from "../src/sandbox/RuntimeMessageRouter.ts";
 import { SitegeistAppStorage, setAppStorage } from "../src/storage/app-storage.ts";
@@ -497,16 +494,11 @@ test(
 							}));
 						},
 					},
-					storageBridge(root),
-					settingsBridge(root),
-					chatBridge(root),
 				],
 				define: { "process.env.NODE_ENV": '"test"', global: "globalThis" },
 				inject: [join(root, "scripts/process-shim.js")],
 				alias: {
 					process: join(root, "scripts/process-shim.js"),
-					"@mariozechner/pi-ai": join(root, "src/pi/models.ts"),
-					"@mariozechner/pi-agent-core": join(root, "src/pi/agent.ts"),
 					"@mariozechner/mini-lit": join(root, "node_modules/@mariozechner/mini-lit"),
 					lit: join(root, "node_modules/lit"),
 				},

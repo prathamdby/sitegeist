@@ -9,8 +9,6 @@ import { chromium } from "@playwright/test";
 import { build } from "esbuild";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
-import { chatBridge } from "../scripts/chat-bridge.mjs";
-import { storageBridge } from "../scripts/storage-bridge.mjs";
 import { documentFixtures } from "./attachments-ui-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -21,6 +19,7 @@ let browser;
 let server;
 let origin;
 const measurements = [];
+const recorded = JSON.parse(readFileSync(join(root, "tests/fixtures/contracts/artifacts-ui.json"), "utf8"));
 
 before(async () => {
 	mkdirSync(work, { recursive: true });
@@ -35,27 +34,21 @@ before(async () => {
 			write: false,
 			platform: "browser",
 			format: "esm",
-			plugins: [chatBridge(root), storageBridge(root)],
 			define: { "process.env.NODE_ENV": '"test"', global: "globalThis" },
 			inject: [`${root}scripts/process-shim.js`],
 			alias: {
 				process: `${root}scripts/process-shim.js`,
-				"@mariozechner/pi-ai": `${root}src/pi/models.ts`,
-				"@mariozechner/pi-agent-core": `${root}src/pi/agent.ts`,
 				"@mariozechner/mini-lit": `${root}node_modules/@mariozechner/mini-lit`,
 				lit: `${root}node_modules/lit`,
 			},
 		});
 		return result.outputFiles[0].text;
 	};
-	const [baseline, local] = await Promise.all([
-		bundle("tests/browser/artifacts-baseline.ts"),
-		bundle("tests/browser/artifacts-local.ts"),
-	]);
+	const local = await bundle("tests/browser/artifacts-local.ts");
 	server = createServer((request, response) => {
-		if (request.url === "/baseline.js" || request.url === "/local.js") {
+		if (request.url === "/local.js") {
 			response.setHeader("Content-Type", "text/javascript");
-			response.end(request.url === "/baseline.js" ? baseline : local);
+			response.end(local);
 		} else if (request.url === "/app.css") {
 			response.setHeader("Content-Type", "text/css");
 			response.end(readFileSync(join(work, "app.css")));
@@ -65,7 +58,7 @@ before(async () => {
 		} else {
 			response.setHeader("Content-Type", "text/html");
 			response.end(
-				`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><script type="module" src="/${request.url === "/baseline" ? "baseline" : "local"}.js"></script>`,
+				`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><script type="module" src="/local.js"></script>`,
 			);
 		}
 	});
@@ -83,9 +76,9 @@ after(async () => {
 	await new Promise((resolve) => server?.close(resolve));
 });
 
-async function pageFor(local = true, width = 600) {
+async function pageFor(width = 600) {
 	const page = await browser.newPage({ viewport: { width, height: 800 } });
-	await page.goto(`${origin}/${local ? "local" : "baseline"}`);
+	await page.goto(`${origin}/local`);
 	await page.waitForSelector('[data-artifacts-ready="true"]');
 	return page;
 }
@@ -100,7 +93,7 @@ async function capture(page, name) {
 }
 
 test("tool results, callbacks and first-match/dollar replacement match the measured public baseline", async () => {
-	const pages = await Promise.all([pageFor(false), pageFor()]);
+	const pages = [await pageFor()];
 	const commands = [
 		{ command: "get", filename: "missing.txt" },
 		{ command: "delete", filename: "missing.txt" },
@@ -113,13 +106,11 @@ test("tool results, callbacks and first-match/dollar replacement match the measu
 		{ command: "logs", filename: "notes.txt" },
 		{ command: "delete", filename: "notes.txt" },
 	];
-	for (const params of commands) {
-		const [baseline, local] = await Promise.all(pages.map((page) => command(page, params)));
+	for (const [index, params] of commands.entries()) {
+		const local = await command(pages[0], params);
+		const baseline = { content: recorded.commands[index] };
 		assert.deepEqual(local.content, baseline.content, JSON.stringify(params));
-		assert.deepEqual(
-			await pages[1].evaluate(() => window.artifactsFixture.state()),
-			await pages[0].evaluate(() => window.artifactsFixture.state()),
-		);
+		assert.deepEqual(await pages[0].evaluate(() => window.artifactsFixture.state()), recorded.states[index]);
 		if (local.content[0].text.startsWith("Error:")) assert.equal(local.isError, true);
 	}
 	for (const page of pages) {
@@ -127,10 +118,7 @@ test("tool results, callbacks and first-match/dollar replacement match the measu
 		await page.evaluate(() => window.artifactsFixture.panel.openArtifact("open.md"));
 		await page.getByTitle("Close artifacts", { exact: true }).click();
 	}
-	assert.deepEqual(
-		await pages[1].evaluate(() => window.artifactsFixture.state()),
-		await pages[0].evaluate(() => window.artifactsFixture.state()),
-	);
+	assert.deepEqual(await pages[0].evaluate(() => window.artifactsFixture.state()), recorded.closed);
 	await Promise.all(pages.map((page) => page.close()));
 });
 
@@ -202,9 +190,9 @@ test("all nine preview kinds retain measured header geometry, source/copy/downlo
 		})),
 	];
 	for (const sample of samples) {
-		const pages = await Promise.all([pageFor(false), pageFor()]);
-		const metrics = [];
-		for (const [index, page] of pages.entries()) {
+		const pages = [await pageFor()];
+		const metrics = [recorded.metrics[sample.filename]];
+		for (const page of pages) {
 			await command(page, { command: "create", filename: sample.filename, content: sample.content });
 			await page.locator(`artifacts-panel ${sample.selector}`).first().waitFor({ state: "visible" });
 			if (sample.filename.endsWith("pdf"))
@@ -257,7 +245,7 @@ test("all nine preview kinds retain measured header geometry, source/copy/downlo
 					};
 				}, sample.selector),
 			);
-			await capture(page, `${index ? "local" : "baseline"}-${sample.filename.replace(/\./g, "-")}`);
+			await capture(page, `local-${sample.filename.replace(/\./g, "-")}`);
 			if (sample.source) {
 				await page.getByTitle("Code", { exact: true }).click();
 				await page.locator("artifacts-panel pre:visible").first().waitFor();
@@ -300,7 +288,7 @@ test("all nine preview kinds retain measured header geometry, source/copy/downlo
 });
 
 test("full-screen narrow overlay, collapsed panel and stable HTML tabs/source mode preserve flows", async () => {
-	const page = await pageFor(true, 480);
+	const page = await pageFor(480);
 	await command(page, {
 		command: "create",
 		filename: "app.html",
@@ -314,8 +302,16 @@ test("full-screen narrow overlay, collapsed panel and stable HTML tabs/source mo
 	assert.equal(await frame.locator("button").textContent(), "1");
 	await command(page, { command: "create", filename: "other.txt", content: "Other tab" });
 	await page.locator('[data-filename="app.html"]').click();
+	await page.evaluate(async () => {
+		const view = [...document.querySelectorAll("sitegeist-artifact-view")].find(
+			(view) => view.filename === "app.html",
+		);
+		await view.updateComplete;
+		await view.ready;
+	});
 	assert.equal(await frame.getByRole("button", { name: "0", exact: true }).textContent(), "0");
 	await frame.getByRole("button", { name: "0", exact: true }).click();
+	await frame.getByRole("button", { name: "1", exact: true }).waitFor();
 	await page.locator('[data-filename="other.txt"]').click();
 	await page.locator('[data-filename="app.html"]').click();
 	assert.equal(await frame.locator("button").textContent(), "1");
@@ -416,6 +412,7 @@ test("real HTML isolation rejects writes and exports offline artifact/attachment
 	assert.deepEqual(isolation, { parent: true, storage: true, chrome: true, errors: [true, true] });
 	assert.equal((await command(page, { command: "get", filename: "data.json" })).content[0].text, '{"value":42}');
 	await page.frameLocator("sitegeist-html-preview iframe").locator("#external").click();
+	await page.waitForFunction(() => window.openCalls.length === 1);
 	assert.deepEqual(await page.evaluate(() => window.openCalls), [
 		["https://example.com/report", "_blank", "noopener,noreferrer"],
 	]);
@@ -512,8 +509,8 @@ test("real Pi Agent creates/updates/reads HTML and restoration never opens the p
 });
 
 test("German headers and partial streaming renderer states retain the public baseline", async () => {
-	const pages = await Promise.all([pageFor(false), pageFor()]);
-	const results = [];
+	const pages = [await pageFor()];
+	const results = [recorded.german];
 	for (const page of pages) {
 		await page.evaluate(() => localStorage.setItem("language", "de"));
 		await page.reload();
@@ -556,8 +553,8 @@ test("German headers and partial streaming renderer states retain the public bas
 });
 
 test("HTML tool settle captures delayed logs while complete/onCompleted remain the measured baseline", async () => {
-	const pages = await Promise.all([pageFor(false), pageFor()]);
-	const results = [];
+	const pages = [await pageFor()];
+	const results = [recorded.completion];
 	const content =
 		'<body><h1>Async HTML</h1><script>onCompleted(()=>console.log("callback must not run"));setTimeout(()=>{console.log("delayed");complete()},100)</script>';
 	for (const page of pages) {
@@ -583,8 +580,8 @@ test("HTML tool settle captures delayed logs while complete/onCompleted remain t
 });
 
 test("filename pills open the panel without toggling source expansion and read errors remain visible", async () => {
-	for (const local of [false, true]) {
-		const page = await pageFor(local);
+	{
+		const page = await pageFor();
 		await command(page, { command: "create", filename: "notes.md", content: "# Note" });
 		await page.evaluate(() =>
 			window.artifactsFixture.renderTool(
@@ -617,9 +614,9 @@ test("filename pills open the panel without toggling source expansion and read e
 });
 
 test("HTML syntax, uncaught and rejection diagnostics retain baseline no-logs tool and visible preview behavior", async () => {
-	const results = [];
-	for (const local of [false, true]) {
-		const page = await pageFor(local);
+	const results = [recorded.diagnostics];
+	{
+		const page = await pageFor();
 		const outputs = [];
 		for (const [filename, script] of [
 			["empty.html", ""],
@@ -645,9 +642,9 @@ test("HTML syntax, uncaught and rejection diagnostics retain baseline no-logs to
 });
 
 test("HTML iframe, source and collapsed console geometry match the visible baseline", async () => {
-	const pages = await Promise.all([pageFor(false), pageFor()]);
-	const results = [];
-	for (const [index, page] of pages.entries()) {
+	const pages = [await pageFor()];
+	const results = [recorded.html];
+	for (const page of pages) {
 		await command(page, {
 			command: "create",
 			filename: "dashboard.html",
@@ -678,7 +675,7 @@ test("HTML iframe, source and collapsed console geometry match the visible basel
 				};
 			}),
 		);
-		await capture(page, `${index ? "local" : "baseline"}-html-dashboard`);
+		await capture(page, "local-html-dashboard");
 		await page.getByTitle("Code", { exact: true }).click();
 		assert.match(await page.locator("artifacts-panel pre:visible").innerText(), /Artifact dashboard/);
 		await page.getByTitle("Preview", { exact: true }).click();

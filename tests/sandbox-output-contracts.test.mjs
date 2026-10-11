@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import vm from "node:vm";
-import { ConsoleRuntimeProvider as BaselineConsoleRuntimeProvider } from "../node_modules/@mariozechner/pi-web-ui/dist/components/sandbox/ConsoleRuntimeProvider.js";
-import { FileDownloadRuntimeProvider as BaselineFileDownloadRuntimeProvider } from "../node_modules/@mariozechner/pi-web-ui/dist/components/sandbox/FileDownloadRuntimeProvider.js";
 import { ConsoleRuntimeProvider } from "../src/sandbox/ConsoleRuntimeProvider.ts";
 import { FileDownloadRuntimeProvider } from "../src/sandbox/FileDownloadRuntimeProvider.ts";
 
@@ -53,10 +51,12 @@ function normalizedFiles(provider) {
 	}));
 }
 
-test("retained and local console providers keep all 10,017 logs in emission order", { timeout: 5000 }, async () => {
+test("console provider keeps the recorded 10,017-log contract in emission order", { timeout: 5000 }, async () => {
 	const count = 10017;
-	const observed = [];
-	for (const Provider of [BaselineConsoleRuntimeProvider, ConsoleRuntimeProvider]) {
+	const observed = [
+		Array.from({ length: count }, (_, i) => ({ type: "log", text: `entry ${i}`, args: ["entry", i] })),
+	];
+	for (const Provider of [ConsoleRuntimeProvider]) {
 		const provider = new Provider();
 		const runtime = onlineRuntime(provider);
 		try {
@@ -78,50 +78,46 @@ test("retained and local console providers keep all 10,017 logs in emission orde
 	assert.deepEqual(observed[1], observed[0]);
 });
 
-test(
-	"retained and local file helpers preserve 17 slash/Unicode names and original contents",
-	{ timeout: 5000 },
-	async () => {
-		const files = Array.from({ length: 17 }, (_, i) => ({
-			fileName: `folder/文-é-${i}.${i % 2 ? "txt" : "bin"}`,
-			content: i % 2 ? `héllo 文 ${i}` : new Uint8Array([0, i, 127, 254, 255]),
-			mimeType: i % 2 ? "text/plain" : "application/octet-stream",
-		}));
-		const expected = files.map(({ fileName, content, mimeType }) => ({
-			fileName,
-			content: typeof content === "string" ? content : Array.from(content),
-			mimeType,
-		}));
-		const observed = [];
-		for (const Provider of [BaselineFileDownloadRuntimeProvider, FileDownloadRuntimeProvider]) {
-			const provider = new Provider();
-			const runtime = onlineRuntime(provider);
-			for (const { fileName, content, mimeType } of files) {
-				await runtime.window.returnDownloadableFile(fileName, content, mimeType);
-			}
-			await runtime.drain();
-			assert.equal(runtime.responses.length, files.length);
-			assert.ok(runtime.responses.every((response) => response.success === true));
-			const collected = normalizedFiles(provider);
-			assert.deepEqual(collected, expected);
-			for (let i = 0; i < files.length; i++) {
-				const content = provider.getFiles()[i].content;
-				const actualBytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
-				const expectedBytes =
-					typeof files[i].content === "string" ? new TextEncoder().encode(files[i].content) : files[i].content;
-				assert.deepEqual(Array.from(actualBytes), Array.from(expectedBytes));
-			}
-			observed.push(collected);
+test("file helpers preserve the recorded 17 slash/Unicode names and original contents", { timeout: 5000 }, async () => {
+	const files = Array.from({ length: 17 }, (_, i) => ({
+		fileName: `folder/文-é-${i}.${i % 2 ? "txt" : "bin"}`,
+		content: i % 2 ? `héllo 文 ${i}` : new Uint8Array([0, i, 127, 254, 255]),
+		mimeType: i % 2 ? "text/plain" : "application/octet-stream",
+	}));
+	const expected = files.map(({ fileName, content, mimeType }) => ({
+		fileName,
+		content: typeof content === "string" ? content : Array.from(content),
+		mimeType,
+	}));
+	const observed = [expected];
+	for (const Provider of [FileDownloadRuntimeProvider]) {
+		const provider = new Provider();
+		const runtime = onlineRuntime(provider);
+		for (const { fileName, content, mimeType } of files) {
+			await runtime.window.returnDownloadableFile(fileName, content, mimeType);
 		}
-		assert.deepEqual(observed[1], observed[0]);
-	},
-);
+		await runtime.drain();
+		assert.equal(runtime.responses.length, files.length);
+		assert.ok(runtime.responses.every((response) => response.success === true));
+		const collected = normalizedFiles(provider);
+		assert.deepEqual(collected, expected);
+		for (let i = 0; i < files.length; i++) {
+			const content = provider.getFiles()[i].content;
+			const actualBytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
+			const expectedBytes =
+				typeof files[i].content === "string" ? new TextEncoder().encode(files[i].content) : files[i].content;
+			assert.deepEqual(Array.from(actualBytes), Array.from(expectedBytes));
+		}
+		observed.push(collected);
+	}
+	assert.deepEqual(observed[1], observed[0]);
+});
 
 test(
 	"optional file providers accumulate across runtime installations until explicit reset",
 	{ timeout: 5000 },
 	async () => {
-		for (const Provider of [BaselineFileDownloadRuntimeProvider, FileDownloadRuntimeProvider]) {
+		for (const Provider of [FileDownloadRuntimeProvider]) {
 			const provider = new Provider();
 			for (const sandboxId of ["first-execution", "second-execution"]) {
 				const runtime = onlineRuntime(provider, sandboxId);

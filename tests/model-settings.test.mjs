@@ -8,9 +8,6 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { build } from "esbuild";
-import { chatBridge } from "../scripts/chat-bridge.mjs";
-import { settingsBridge } from "../scripts/settings-bridge.mjs";
-import { storageBridge } from "../scripts/storage-bridge.mjs";
 import { getModel } from "../src/pi/models.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -29,13 +26,10 @@ before(async () => {
 		write: false,
 		platform: "browser",
 		format: "esm",
-		plugins: [storageBridge(root), settingsBridge(root), chatBridge(root)],
 		define: { "process.env.NODE_ENV": '"test"', global: "globalThis" },
 		inject: [`${root}scripts/process-shim.js`],
 		alias: {
 			process: `${root}scripts/process-shim.js`,
-			"@mariozechner/pi-ai": `${root}src/pi/models.ts`,
-			"@mariozechner/pi-agent-core": `${root}src/pi/agent.ts`,
 			"@mariozechner/mini-lit": `${root}node_modules/@mariozechner/mini-lit`,
 			lit: `${root}node_modules/lit`,
 		},
