@@ -5,11 +5,11 @@ import {
 	type SandboxResult,
 } from "@mariozechner/pi-web-ui/dist/components/SandboxedIframe.js";
 import type { SandboxRuntimeProvider } from "@mariozechner/pi-web-ui/dist/components/sandbox/SandboxRuntimeProvider.js";
-import type { Attachment } from "@mariozechner/pi-web-ui/dist/utils/attachment-utils.js";
 import { html } from "lit";
 import { createRef, ref } from "lit/directives/ref.js";
 import { Code } from "lucide";
 import { type Static, Type } from "typebox";
+import type { Attachment } from "../../attachments/types.js";
 import {
 	registerToolRenderer,
 	renderCollapsibleHeader,

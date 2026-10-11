@@ -1,0 +1,88 @@
+{
+	"names": {
+		"pdf": {
+			"mimeType": "application/pdf",
+			"extractedText": "<pdf filename=\"corrupt%ZZ\" <file>&.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>"
+		},
+		"docx": {
+			"mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			"extractedText": "<docx filename=\"corrupt%ZZ\" <file>&.docx\">\n<page number=\"1\">\nHello DOCX & more\nSecond paragraph\n</page>\n</docx>"
+		},
+		"pptx": {
+			"mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+			"extractedText": "<pptx filename=\"corrupt%ZZ\" <file>&.pptx\">\n<slide number=\"1\">\nSlide 1\n &amp; detail\nNext paragraph\n</slide>\n<slide number=\"2\">\nSlide 2\n &amp; detail\nNext paragraph\n</slide>\n<slide number=\"3\">\nSlide 10\n &amp; detail\nNext paragraph\n</slide>\n</pptx>"
+		},
+		"xlsx": {
+			"mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			"extractedText": "<excel filename=\"corrupt%ZZ\" <file>&.xlsx\">\n<sheet name=\"People\" index=\"1\">\nName,Count\nAlice,2\nBob,3\n</sheet>\n<sheet name=\"Second & sheet\" index=\"2\">\nOther,\"x,y\"\n<test>,TRUE\n</sheet>\n</excel>"
+		},
+		"xls": {
+			"mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			"extractedText": "<excel filename=\"corrupt%ZZ\" <file>&.xls\">\n<sheet name=\"People\" index=\"1\">\nName,Count\nAlice,2\nBob,3\n</sheet>\n<sheet name=\"Second & sheet\" index=\"2\">\nOther,\"x,y\"\n<test>,TRUE\n</sheet>\n</excel>"
+		},
+		"specialSheet": {
+			"mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			"extractedText": "<excel filename=\"special\" <file>&.xlsx\">\n<sheet name=\"Quote\" <angle>&\" index=\"1\">\nBody\n\"<data>&\"\"quoted\"\"\"\n</sheet>\n</excel>"
+		}
+	},
+	"empty": {
+		"pdf": {
+			"error": "Failed to process PDF: InvalidPDFException: The PDF file is empty, i.e. its size is zero bytes."
+		},
+		"docx": {
+			"error": "Failed to process DOCX: Error: End of data reached (data length = 0, asked index = 4). Corrupted zip ?"
+		},
+		"pptx": {
+			"error": "Failed to process PPTX: Error: End of data reached (data length = 0, asked index = 4). Corrupted zip ?"
+		},
+		"xlsx": {
+			"mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			"type": "document",
+			"size": 0,
+			"content": "",
+			"extractedText": "<excel filename=\"empty.xlsx\">\n<sheet name=\"Sheet1\" index=\"1\">\n\n</sheet>\n</excel>"
+		},
+		"xls": {
+			"mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			"type": "document",
+			"size": 0,
+			"content": "",
+			"extractedText": "<excel filename=\"empty.xls\">\n<sheet name=\"Sheet1\" index=\"1\">\n\n</sheet>\n</excel>"
+		},
+		"txt": {
+			"mimeType": "text/plain",
+			"type": "document",
+			"size": 0,
+			"content": "",
+			"extractedText": ""
+		},
+		"unknown": {
+			"error": "Failed to process PDF: InvalidPDFException: Invalid PDF structure."
+		},
+		"mislabeled.txt": {
+			"error": "Failed to process PDF: InvalidPDFException: Invalid PDF structure."
+		}
+	},
+	"urls": {
+		"https://example.test/download?file=sample.pdf": {
+			"error": "Unsupported file type: application/octet-stream"
+		},
+		"https://example.test/download#sample.pdf": {
+			"content": [
+				{
+					"type": "text",
+					"text": "<pdf filename=\"download#sample.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>"
+				}
+			],
+			"details": {
+				"extractedText": "<pdf filename=\"download#sample.pdf\">\n<page number=\"1\">\nFirst PDF page\n</page>\n<page number=\"2\">\nSecond PDF page\n</page>\n</pdf>",
+				"format": "pdf",
+				"fileName": "download#sample.pdf",
+				"size": 857
+			}
+		},
+		"headerlessSize": {
+			"error": "Document is too large (50.0MB). Maximum supported size is 50MB."
+		}
+	}
+}
