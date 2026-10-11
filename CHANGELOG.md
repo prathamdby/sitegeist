@@ -21,6 +21,8 @@
 - Escaped sandbox identifiers in runtime scripts so script-data markers in filenames cannot swallow downloaded HTML documents.
 - Fixed sidepanel startup hanging on Loading while restoring artifacts before the panel is attached.
 - Restored full-size artifact-panel host layout when switching between split and narrow overlay modes.
+- Forwarded the chat session id to the Pi agent so OpenCode Go requests carry the required per-conversation routing header from the first turn.
+- Listed OpenCode Go in the settings API-key section so its key can be entered before model selection.
 
 ### Removed
 
