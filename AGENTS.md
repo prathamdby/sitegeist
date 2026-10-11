@@ -70,3 +70,9 @@ src/
 static/
   manifest.chrome.json  # Extension manifest (version lives here)
 ```
+
+## Cursor Cloud specific instructions
+
+- `install` places Node 22.23.3 (the version in `.github/workflows/check.yml`) on `~/.local/bin` and `/usr/local/bin`. Login shells resolve `node` from `~/.local/bin`. `/exec-daemon/node` is an older Node 22; do not use it for `npm ci`, `./check.sh`, or tests.
+- `start` runs `./dev.sh`, which watches the extension and serves the reload socket on port 8765. If that port is open, leave the watcher running.
+- Load `dist-chrome/` as an unpacked extension. On the extension Details page, enable Allow user scripts. Until that toggle is on, the side panel can remain on "Loading...". With it on, first launch shows "Welcome to Sitegeist" and the API Keys & OAuth settings.
