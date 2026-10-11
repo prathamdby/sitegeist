@@ -28,6 +28,7 @@ export class AgentInterface extends LitElement {
 	private observer?: ResizeObserver;
 	private autoScroll = true;
 	private lastClientHeight = 0;
+	private lastScrollTop = 0;
 	private streaming = false;
 	private streamingMessage?: AssistantMessage;
 	private messageKeys = new WeakMap<AgentMessage, object>();
@@ -137,15 +138,21 @@ export class AgentInterface extends LitElement {
 
 	private scrollToBottom(): void {
 		const element = this.scrollRef.value;
-		if (element && this.autoScroll) element.scrollTop = element.scrollHeight;
+		if (element && this.autoScroll) {
+			element.scrollTop = element.scrollHeight;
+			this.lastScrollTop = element.scrollTop;
+		}
 	}
 
 	private handleScroll = (): void => {
 		const element = this.scrollRef.value;
 		if (!element) return;
 		const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 50;
-		if (element.clientHeight === this.lastClientHeight || nearBottom) this.autoScroll = nearBottom;
+		if (nearBottom) this.autoScroll = true;
+		else if (element.clientHeight === this.lastClientHeight && element.scrollTop < this.lastScrollTop)
+			this.autoScroll = false;
 		this.lastClientHeight = element.clientHeight;
+		this.lastScrollTop = element.scrollTop;
 	};
 
 	protected override updated(): void {

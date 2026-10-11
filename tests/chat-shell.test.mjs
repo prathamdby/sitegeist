@@ -382,6 +382,46 @@ test("autoscroll yields away from the bottom, resumes within 50 pixels and follo
 	}
 });
 
+test("queued scroll events after content grows do not disable active autoscroll", async () => {
+	const page = await fixture(390);
+	try {
+		const state = await page.evaluate(async () => {
+			const { agent, controller } = window.chatFixture;
+			const original = agent.state.messages.find((message) => message.role === "assistant");
+			for (let index = 0; index < 30; index++)
+				agent.appendMessage({ ...structuredClone(original), timestamp: 4000 + index });
+			controller.requestUpdate();
+			await controller.updateComplete;
+			for (let depth = 0; depth < 4; depth++)
+				await Promise.all([...controller.querySelectorAll("*")].map((element) => element.updateComplete));
+			controller.setAutoScroll(true);
+			const area = controller.querySelector(".flex-1.overflow-y-auto");
+			area.dispatchEvent(new Event("scroll"));
+			const top = area.scrollTop;
+			agent.appendMessage({ ...structuredClone(original), timestamp: 5000 });
+			controller.requestUpdate();
+			await controller.updateComplete;
+			for (let depth = 0; depth < 4; depth++)
+				await Promise.all([...controller.querySelectorAll("*")].map((element) => element.updateComplete));
+			const distance = area.scrollHeight - area.scrollTop - area.clientHeight;
+			area.dispatchEvent(new Event("scroll"));
+			return { top, newTop: area.scrollTop, distance };
+		});
+		assert.equal(state.newTop, state.top);
+		assert.ok(state.distance > 50);
+		await page.waitForFunction(
+			() => {
+				const area = document.querySelector("sitegeist-agent-interface .flex-1.overflow-y-auto");
+				return area.scrollHeight - area.scrollTop - area.clientHeight <= 1;
+			},
+			undefined,
+			{ timeout: 3000 },
+		);
+	} finally {
+		await page.close();
+	}
+});
+
 test("composer drag, processing and attachment-strip presentation preserve the measured baseline", async () => {
 	const page = await fixture();
 	try {
