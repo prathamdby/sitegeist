@@ -5,9 +5,6 @@ import "@mariozechner/mini-lit/dist/ThemeToggle.js";
 import {
 	ChatPanel,
 	createExtractDocumentTool,
-	ModelSelector,
-	ProxyTab,
-	SettingsDialog,
 	// PersistentStorageDialog,
 	setShowJsonMode,
 } from "@mariozechner/pi-web-ui";
@@ -18,8 +15,10 @@ import { AboutTab } from "./dialogs/AboutTab.js";
 import { ApiKeyOrOAuthDialog } from "./dialogs/ApiKeyOrOAuthDialog.js";
 import { ApiKeysOAuthTab } from "./dialogs/ApiKeysOAuthTab.js";
 import { CostsTab } from "./dialogs/CostsTab.js";
+import { ModelSelector } from "./dialogs/ModelSelector.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
 import { SitegeistSessionListDialog } from "./dialogs/SessionListDialog.js";
+import { ProxyTab, SettingsDialog } from "./dialogs/SettingsDialog.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
 import { UserScriptsPermissionDialog } from "./dialogs/UserScriptsPermissionDialog.js";
 import { WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
@@ -42,7 +41,7 @@ import {
 } from "./pi/agent.js";
 import { CostRecorder } from "./pi/costs.js";
 import { getModel, getModels, getProviders, ModelConfiguration } from "./pi/models.js";
-import { selectionRequiredModel } from "./pi/selection.js";
+import { applyModelSelection, DEFAULT_MODELS, resolveInitialModel } from "./pi/selection.js";
 import { createStreamFn } from "./pi/stream.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
 import { SitegeistAppStorage, setAppStorage } from "./storage/app-storage.js";
@@ -106,30 +105,6 @@ const costRecorder = new CostRecorder();
 
 // Cached auth type label for the current provider
 let authLabel = "";
-
-const DEFAULT_MODELS: Record<string, string> = {
-	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
-	anthropic: "claude-sonnet-4-6",
-	"azure-openai-responses": "gpt-5.2",
-	cerebras: "zai-glm-4.6",
-	"github-copilot": "gpt-4o",
-	google: "gemini-2.5-flash",
-	"google-vertex": "gemini-3-pro-preview",
-	groq: "openai/gpt-oss-20b",
-	huggingface: "moonshotai/Kimi-K2.5",
-	"kimi-coding": "kimi-k2-thinking",
-	minimax: "MiniMax-M2.1",
-	"minimax-cn": "MiniMax-M2.1",
-	mistral: "devstral-medium-latest",
-	openai: "gpt-4o-mini",
-	"openai-codex": "gpt-5.1-codex-mini",
-	opencode: "claude-opus-4-6",
-	"opencode-go": "kimi-k2.5",
-	openrouter: "openai/gpt-5.1-codex",
-	"vercel-ai-gateway": "anthropic/claude-opus-4-6",
-	xai: "grok-4-fast-non-reasoning",
-	zai: "glm-4.6",
-};
 
 async function selectDefaultModelForAvailableProvider() {
 	const providers = await getProvidersWithKeys();
@@ -355,14 +330,12 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 	const savedModel = initialState ? initialState.model : await storage.settings.get<unknown>("lastUsedModel");
 	const hasSavedSelection = initialState !== undefined || (savedModel !== undefined && savedModel !== null);
-	let defaultModel = await modelConfiguration.resolveModel(savedModel);
-	if (!hasSavedSelection) {
-		for (const provider of await getProvidersWithKeys()) {
-			const modelId = DEFAULT_MODELS[provider];
-			if (modelId) defaultModel = getModel(provider, modelId);
-			if (defaultModel) break;
-		}
-	}
+	const defaultModel = await resolveInitialModel(
+		modelConfiguration,
+		savedModel,
+		hasSavedSelection,
+		await getProvidersWithKeys(),
+	);
 
 	agent = new Agent({
 		initialState: {
@@ -371,7 +344,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			messages: [],
 			tools: [],
 			...initialState,
-			model: defaultModel ?? selectionRequiredModel,
+			model: defaultModel,
 		},
 		convertToLlm: browserMessageTransformer,
 		toolExecution: "sequential",
@@ -474,11 +447,11 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 						Toast.error("That model is no longer configured. Select another model.");
 						return;
 					}
-					agent.setModel(resolved);
-					storage.settings.set("lastUsedModel", resolved).catch(() => {});
-					chatPanel.agentInterface?.requestUpdate();
-					updateAuthLabel().catch(() => {});
-					renderApp();
+					applyModelSelection(resolved, agent, storage.settings, () => {
+						chatPanel.agentInterface?.requestUpdate();
+						updateAuthLabel().catch(() => {});
+						renderApp();
+					}).catch(() => {});
 				},
 				providers,
 			);

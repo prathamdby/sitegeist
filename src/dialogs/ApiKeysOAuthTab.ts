@@ -1,7 +1,8 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
-import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { Toast } from "../components/Toast.js";
+import { SettingsTab } from "./SettingsDialog.js";
+import "../components/ProviderKeyInput.js";
 import {
 	getOAuthProviderName,
 	isOAuthCredentials,
@@ -30,7 +31,6 @@ const HIDDEN_PROVIDERS = new Set([
 	"google-vertex",
 	"openai-codex",
 	"google-gemini-cli",
-	"opencode",
 	"opencode-go",
 	"kimi-coding",
 ]);
@@ -178,7 +178,7 @@ export class ApiKeysOAuthTab extends SettingsTab {
 					</p>
 				</div>
 				<div class="flex flex-col gap-6">
-					${providers.map((provider) => html`<provider-key-input .provider=${provider}></provider-key-input>`)}
+					${providers.map((provider) => html`<sitegeist-provider-key-input .provider=${provider}></sitegeist-provider-key-input>`)}
 				</div>
 			</div>
 		`;
@@ -195,6 +195,6 @@ export class ApiKeysOAuthTab extends SettingsTab {
 	}
 }
 
-if (!customElements.get("api-keys-oauth-tab")) {
-	customElements.define("api-keys-oauth-tab", ApiKeysOAuthTab);
+if (!customElements.get("sitegeist-api-keys-oauth-tab")) {
+	customElements.define("sitegeist-api-keys-oauth-tab", ApiKeysOAuthTab);
 }

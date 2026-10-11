@@ -20,5 +20,7 @@ jobs:
         run: bash scripts/install-legacy-ui.sh
       - name: Install extension
         run: npm ci
+      - name: Install browser for migration contracts
+        run: npx playwright install --with-deps chromium
       - name: Check extension and migration contracts
         run: ./check.sh && npm test && npm run check:bundle && git diff --exit-code
