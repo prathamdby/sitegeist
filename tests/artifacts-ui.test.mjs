@@ -16,6 +16,13 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const renders = process.env.ARTIFACT_RENDER_DIRECTORY;
 let work;
 let measurementsPath;
+
+function ownedDirectory(prefix) {
+	const directory = mkdtempSync(join(tmpdir(), prefix));
+	if (lstatSync(directory).isSymbolicLink()) throw new Error(`scratch directory is a symlink: ${directory}`);
+	chmodSync(directory, 0o700);
+	return directory;
+}
 let browser;
 let server;
 let origin;
@@ -23,10 +30,10 @@ const measurements = [];
 const recorded = JSON.parse(readFileSync(join(root, "tests/fixtures/contracts/artifacts-ui.json"), "utf8"));
 
 before(async () => {
-	work = mkdtempSync(join(tmpdir(), "sitegeist-artifacts-ui-"));
-	if (lstatSync(work).isSymbolicLink()) throw new Error(`scratch directory is a symlink: ${work}`);
-	chmodSync(work, 0o700);
-	measurementsPath = process.env.ARTIFACT_MEASUREMENTS_PATH || join(work, "artifact-measurements.json");
+	work = ownedDirectory("sitegeist-artifacts-ui-");
+	if (process.env.ARTIFACT_MEASUREMENTS_PATH) measurementsPath = process.env.ARTIFACT_MEASUREMENTS_PATH;
+	else if (renders) measurementsPath = join(renders, "artifact-measurements.json");
+	else measurementsPath = join(ownedDirectory("sitegeist-artifact-measurements-"), "artifact-measurements.json");
 	if (renders) mkdirSync(renders, { recursive: true });
 	mkdirSync(dirname(measurementsPath), { recursive: true });
 	execFileSync(`${root}node_modules/.bin/tailwindcss`, ["-i", `${root}src/app.css`, "-o", join(work, "app.css")]);

@@ -13,6 +13,14 @@ import { documentFixtures } from "./attachments-ui-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 let work;
+let diagnostics;
+
+function ownedDirectory(prefix) {
+	const directory = mkdtempSync(join(tmpdir(), prefix));
+	if (lstatSync(directory).isSymbolicLink()) throw new Error(`scratch directory is a symlink: ${directory}`);
+	chmodSync(directory, 0o700);
+	return directory;
+}
 const renders = process.env.ATTACHMENT_RENDER_DIRECTORY;
 const recorded = JSON.parse(readFileSync(join(root, "tests/fixtures/contracts/attachments-ui.json"), "utf8"));
 let browser;
@@ -77,9 +85,8 @@ const attachments = [
 ];
 
 before(async () => {
-	work = mkdtempSync(join(tmpdir(), "sitegeist-attachments-ui-"));
-	if (lstatSync(work).isSymbolicLink()) throw new Error(`scratch directory is a symlink: ${work}`);
-	chmodSync(work, 0o700);
+	work = ownedDirectory("sitegeist-attachments-ui-");
+	diagnostics = renders || ownedDirectory("sitegeist-attachments-diagnostics-");
 	if (renders) mkdirSync(renders, { recursive: true });
 	execFileSync(`${root}node_modules/.bin/tailwindcss`, ["-i", `${root}src/app.css`, "-o", join(work, "app.css")], {
 		timeout: 30000,
@@ -195,7 +202,7 @@ test("attachment baseline captures public DOM, layout and controls", { skip: !re
 			await page.keyboard.press("Escape");
 			await page.locator("attachment-overlay").waitFor({ state: "detached" });
 		}
-		writeFileSync(join(work, `measurement-${prefix}.json`), JSON.stringify(measurements, null, 2));
+		writeFileSync(join(diagnostics, `measurement-${prefix}.json`), JSON.stringify(measurements, null, 2));
 		await page.close();
 	}
 	assert.ok(true);
@@ -258,7 +265,7 @@ test("attachment baseline document previews, toggles, errors and loading states"
 		id: "pdf-error",
 		html: await page.locator("attachment-overlay").evaluate((element) => element.outerHTML),
 	});
-	writeFileSync(join(work, `documents-after.json`), JSON.stringify(observations, null, 2));
+	writeFileSync(join(diagnostics, `documents-after.json`), JSON.stringify(observations, null, 2));
 	await page.close();
 });
 
@@ -303,7 +310,7 @@ test("attachment baseline missing text, fallback and deferred loading probe", {}
 		),
 		recorded.fallback,
 	);
-	writeFileSync(join(work, "fallback-after.json"), JSON.stringify(observations, null, 2));
+	writeFileSync(join(diagnostics, "fallback-after.json"), JSON.stringify(observations, null, 2));
 	await page.close();
 });
 
@@ -334,7 +341,7 @@ test("attachment baseline localization probe", {}, async () => {
 		{ remove: observations.remove, files: observations.files.map((text) => text.replace(/\s+/g, " ").trim()) },
 		recorded.locale,
 	);
-	writeFileSync(join(work, "locale-after.json"), JSON.stringify(observations, null, 2));
+	writeFileSync(join(diagnostics, "locale-after.json"), JSON.stringify(observations, null, 2));
 	await page.close();
 });
 
