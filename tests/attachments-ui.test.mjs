@@ -132,9 +132,12 @@ before(async () => {
 });
 
 after(async () => {
-	await browser?.close();
-	await new Promise((resolve) => server?.close(resolve) ?? resolve());
-	if (work) rmSync(work, { recursive: true, force: true });
+	try {
+		await browser?.close();
+		await new Promise((resolve) => server?.close(resolve) ?? resolve());
+	} finally {
+		if (work) rmSync(work, { recursive: true, force: true });
+	}
 });
 
 async function fixture(width = 1200, dark = false) {

@@ -127,9 +127,12 @@ before(async () => {
 });
 
 after(async () => {
-	await context?.close();
-	await new Promise((resolve) => server?.close(resolve) ?? resolve());
-	if (directory) rmSync(directory, { recursive: true, force: true });
+	try {
+		await context?.close();
+		await new Promise((resolve) => server?.close(resolve) ?? resolve());
+	} finally {
+		if (directory) rmSync(directory, { recursive: true, force: true });
+	}
 });
 
 async function debugPage(language) {

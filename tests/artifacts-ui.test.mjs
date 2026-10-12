@@ -14,9 +14,8 @@ import { documentFixtures } from "./attachments-ui-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const renders = process.env.ARTIFACT_RENDER_DIRECTORY;
-const measurementsPath =
-	process.env.ARTIFACT_MEASUREMENTS_PATH || join(tmpdir(), "sitegeist-artifact-measurements.json");
 let work;
+let measurementsPath;
 let browser;
 let server;
 let origin;
@@ -27,6 +26,7 @@ before(async () => {
 	work = mkdtempSync(join(tmpdir(), "sitegeist-artifacts-ui-"));
 	if (lstatSync(work).isSymbolicLink()) throw new Error(`scratch directory is a symlink: ${work}`);
 	chmodSync(work, 0o700);
+	measurementsPath = process.env.ARTIFACT_MEASUREMENTS_PATH || join(work, "artifact-measurements.json");
 	if (renders) mkdirSync(renders, { recursive: true });
 	mkdirSync(dirname(measurementsPath), { recursive: true });
 	execFileSync(`${root}node_modules/.bin/tailwindcss`, ["-i", `${root}src/app.css`, "-o", join(work, "app.css")]);
@@ -75,10 +75,13 @@ before(async () => {
 });
 
 after(async () => {
-	writeFileSync(measurementsPath, JSON.stringify(measurements, null, 2));
-	await browser?.close();
-	await new Promise((resolve) => server?.close(resolve));
-	if (work) rmSync(work, { recursive: true, force: true });
+	try {
+		if (measurementsPath) writeFileSync(measurementsPath, JSON.stringify(measurements, null, 2));
+		await browser?.close();
+		await new Promise((resolve) => server?.close(resolve));
+	} finally {
+		if (work) rmSync(work, { recursive: true, force: true });
+	}
 });
 
 async function pageFor(width = 600) {
