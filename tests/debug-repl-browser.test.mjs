@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -47,9 +47,7 @@ let server;
 const renders = process.env.SITEGEIST_DEBUG_RENDERS;
 
 before(async () => {
-	const scratch = join(homedir(), ".capy/work");
-	mkdirSync(scratch, { recursive: true });
-	directory = mkdtempSync(join(scratch, "sitegeist-debug-"));
+	directory = mkdtempSync(join(tmpdir(), "sitegeist-debug-"));
 	const extension = join(directory, "extension");
 	mkdirSync(extension);
 	const manifest = JSON.parse(readFileSync(join(root, "static/manifest.chrome.json"), "utf8"));

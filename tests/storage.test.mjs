@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
@@ -450,7 +450,7 @@ test("unwired stores fail explicitly; quota and persistence forward browser capa
 });
 
 test("browser bundle uses one application-owned storage singleton and the local sessions class", async () => {
-	const outdir = join(homedir(), ".capy/work/storage-tests");
+	const outdir = join(tmpdir(), "sitegeist-storage-tests");
 	await mkdir(outdir, { recursive: true });
 	await mkdir(join(outdir, "unrelated/storage"), { recursive: true });
 	const unrelated = join(outdir, "unrelated/storage/fixture.js");

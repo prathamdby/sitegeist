@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -11,7 +12,7 @@ import * as XLSX from "xlsx";
 import { documentFixtures } from "./attachments-ui-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const work = join(process.env.HOME, ".capy/work/attachments-ui");
+const work = join(tmpdir(), "sitegeist-attachments-ui");
 const renders = process.env.ATTACHMENT_RENDER_DIRECTORY;
 const recorded = JSON.parse(readFileSync(join(root, "tests/fixtures/contracts/attachments-ui.json"), "utf8"));
 let browser;

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -12,7 +13,7 @@ import * as XLSX from "xlsx";
 import { documentFixtures } from "./attachments-ui-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const work = join(process.env.HOME, ".capy/work/artifacts-ui");
+const work = join(tmpdir(), "sitegeist-artifacts-ui");
 const renders = process.env.ARTIFACT_RENDER_DIRECTORY;
 const measurementsPath = process.env.ARTIFACT_MEASUREMENTS_PATH || join(work, "artifact-measurements.json");
 let browser;
