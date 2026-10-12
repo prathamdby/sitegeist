@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +12,9 @@ import * as XLSX from "xlsx";
 import { documentFixtures } from "./attachments-ui-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const work = join(tmpdir(), "sitegeist-attachments-ui");
+const work = mkdtempSync(join(tmpdir(), "sitegeist-attachments-ui-"));
+if (lstatSync(work).isSymbolicLink()) throw new Error(`scratch directory is a symlink: ${work}`);
+chmodSync(work, 0o700);
 const renders = process.env.ATTACHMENT_RENDER_DIRECTORY;
 const recorded = JSON.parse(readFileSync(join(root, "tests/fixtures/contracts/attachments-ui.json"), "utf8"));
 let browser;
@@ -77,7 +79,6 @@ const attachments = [
 ];
 
 before(async () => {
-	mkdirSync(work, { recursive: true });
 	if (renders) mkdirSync(renders, { recursive: true });
 	execFileSync(`${root}node_modules/.bin/tailwindcss`, ["-i", `${root}src/app.css`, "-o", join(work, "app.css")], {
 		timeout: 30000,
