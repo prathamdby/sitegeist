@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- The toolbar click opens the side panel in the same turn as the click. Waiting for the panel options to finish was dropping the user gesture, so Chrome refused to open it.
 - A task refuses restricted and file URLs, drops closed tabs from its group, and moves the task to a live tab when the owner tab is already gone. A screenshot attach is released after the capture. Work-tab errors are returned to the panel instead of left unanswered.
 - A tab that is refused a session locked by another tab drops that session from its panel URL, and a mismatched lock request reports the recorded owner.
 - Kept a session lock when the side-panel port times out, and ignored panel messages that name a different tab than the connection.
