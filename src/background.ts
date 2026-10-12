@@ -1,6 +1,7 @@
 import {
 	clearHostBinding,
 	decideLock,
+	foreignLockOwner,
 	foreignPanelRequest,
 	type PanelBinding,
 	releaseLocksForOwner,
@@ -57,22 +58,30 @@ let cacheReady: Promise<void> = Promise.resolve();
 let cacheLoaded = false;
 
 function openPanelForTab(tabId: number): void {
-	if (!cacheLoaded) {
-		void cacheReady.then(() => openPanelForTab(tabId));
-		return;
-	}
-	const binding = bindings[String(tabId)];
+	const binding = cacheLoaded ? bindings[String(tabId)] : undefined;
 	const ownerTabId = binding?.ownerTabId ?? tabId;
 	const path = sidePanelPath(ownerTabId, binding?.sessionId);
-	void chrome.sidePanel.setOptions({ tabId, enabled: true, path }).then(
-		() =>
-			chrome.sidePanel.open({ tabId }).catch((error: unknown) => {
-				console.error("[Background] Failed to open side panel", error);
-			}),
-		(error: unknown) => {
-			console.error("[Background] Failed to set side panel options", error);
-		},
-	);
+	// open() must be called in this click. Waiting for setOptions drops the user gesture.
+	void chrome.sidePanel.setOptions({ tabId, enabled: true, path }).catch((error: unknown) => {
+		console.error("[Background] Failed to set side panel options", error);
+	});
+	void chrome.sidePanel.open({ tabId }).catch((error: unknown) => {
+		console.error("[Background] Failed to open side panel", error);
+	});
+	if (cacheLoaded) return;
+	void cacheReady.then(() => {
+		const ready = bindings[String(tabId)];
+		const readyOwner = ready?.ownerTabId ?? tabId;
+		void chrome.sidePanel
+			.setOptions({
+				tabId,
+				enabled: true,
+				path: sidePanelPath(readyOwner, ready?.sessionId),
+			})
+			.catch((error: unknown) => {
+				console.error("[Background] Failed to set side panel options", error);
+			});
+	});
 }
 
 async function persist(): Promise<void> {
@@ -166,6 +175,8 @@ function rememberDisconnect(ownerTabId: number): void {
 		return;
 	}
 	panelRefcounts.delete(ownerTabId);
+	// Leave openPanels set. This port also drops on idle timeout and when the
+	// user switches tabs, and the session stays with this tab until the tab is gone.
 }
 
 function bindOwner(sessionId: string, ownerTabId: number): void {
@@ -293,11 +304,12 @@ async function handlePanelMessage(
 ): Promise<void> {
 	if (foreignPanelRequest(ownerTabId, msg)) {
 		if (msg.type === "acquireLock") {
+			const recordedOwner = foreignLockOwner(locks, msg.sessionId);
 			const response: LockResultMessage = {
 				type: "lockResult",
 				sessionId: msg.sessionId,
 				success: false,
-				ownerTabId,
+				...(recordedOwner !== undefined ? { ownerTabId: recordedOwner } : {}),
 			};
 			port.postMessage(response);
 		} else if (msg.type === "getBinding") {

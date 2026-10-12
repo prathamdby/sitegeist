@@ -12,8 +12,10 @@ import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { RuntimeMessageBridge } from "../src/sandbox/RuntimeMessageBridge.ts";
 import { RUNTIME_MESSAGE_ROUTER } from "../src/sandbox/RuntimeMessageRouter.ts";
 import { SitegeistAppStorage, setAppStorage } from "../src/storage/app-storage.ts";
+import { setTaskContext } from "../src/tasks/client.ts";
 import { BrowserJsRuntimeProvider, NavigateRuntimeProvider } from "../src/tools/repl/runtime-providers.ts";
 import { buildWrapperCode, requestUserScriptsPermission } from "../src/tools/repl/userscripts-helpers.ts";
+import { initialize } from "../src/utils/port.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const worldId = "sitegeist-browser-script";
@@ -143,6 +145,59 @@ test("browserjs cancellation without terminate cleans up on close/session/provid
 			assert.equal(h.onRemoved.listeners.size, 0);
 		});
 	}
+});
+
+test("a task with no work tab reports no active tab and still finishes after a tab switch", async () => {
+	let executions = 0;
+	const h = harness({
+		query: async () => [{ id: 7, windowId: 1, url: "https://user.example" }],
+		execute: async () => {
+			executions++;
+			return [{ result: { success: true, lastValue: 1 } }];
+		},
+	});
+	h.chrome.runtime.connect = () => {
+		const onMessage = new ChromeEvent();
+		const onDisconnect = new ChromeEvent();
+		return {
+			onMessage,
+			onDisconnect,
+			postMessage() {
+				onMessage.emit({ type: "workTarget" });
+			},
+		};
+	};
+	initialize(1);
+	setTaskContext(() => ({ sessionId: "session-a", ownerTabId: 1 }));
+	const provider = new BrowserJsRuntimeProvider([]);
+	provider.onExecutionStart("parent-execution", new AbortController().signal);
+	const missing = browserCall(provider);
+	await missing.done;
+	assert.equal(missing.responses[0].success, false);
+	assert.match(missing.responses[0].error, /No active tab found/);
+	assert.equal(executions, 0);
+
+	setTaskContext(() => ({}));
+	let injected = false;
+	const running = harness({
+		execute: () => {
+			injected = true;
+			return new Promise((resolve) => {
+				complete = resolve;
+			});
+		},
+	});
+	let complete;
+	const second = new BrowserJsRuntimeProvider([]);
+	second.onExecutionStart("parent-execution", new AbortController().signal);
+	const call = browserCall(second);
+	await eventually(() => injected);
+	running.onActivated.emit({ tabId: 8, windowId: 1 });
+	await tick();
+	complete([{ result: { success: true, lastValue: 42 } }]);
+	await call.done;
+	assert.equal(call.responses[0].cancelled, undefined);
+	assert.equal(call.responses[0].success, true);
 });
 
 test("a pre-aborted call or abort during tab lookup never registers or injects", async () => {

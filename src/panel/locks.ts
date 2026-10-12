@@ -43,6 +43,11 @@ export function decideLock(
 	return { granted: false, ownerTabId: owner };
 }
 
+/** Owner recorded for a session, used when a mismatched panel is denied. */
+export function foreignLockOwner(locks: Record<string, number>, sessionId: string): number | undefined {
+	return locks[sessionId];
+}
+
 export function releaseLocksForOwner(locks: Record<string, number>, ownerTabId: number): Record<string, number> {
 	const next: Record<string, number> = {};
 	for (const [sessionId, owner] of Object.entries(locks)) {

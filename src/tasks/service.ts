@@ -117,8 +117,7 @@ async function capture(sessionId: string): Promise<string> {
 		if (!result.data) throw new Error("Screenshot returned no image");
 		return `data:image/png;base64,${result.data}`;
 	} finally {
-		const [active] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
-		if (temporary && active?.id === tab.id) await detach(tab.id);
+		if (temporary) await detach(tab.id);
 	}
 }
 
@@ -176,8 +175,9 @@ async function restore(): Promise<void> {
 	book.restore(stored);
 	const tabs = await chrome.tabs.query({});
 	const live = new Set(tabs.flatMap((tab) => (tab.id === undefined ? [] : [tab.id])));
-	await book.discardMissing(live);
+	const promoted = await book.discardMissing(live);
 	await persist();
+	for (const item of promoted) await hooks?.ownerPromoted(item.session, item.previousOwnerTabId);
 }
 
 export function startWorkSessions(next: WorkSessionHooks): void {
@@ -245,6 +245,8 @@ function failure(message: SidepanelToBackgroundMessage, error: string): Backgrou
 	if (message.type === "selectWorkTab") return { type: "workTabSelected", error };
 	if (message.type === "shareActiveTab") return { type: "shareActiveTabResult", error };
 	if (message.type === "captureWorkTab") return { type: "workTabCapture", error };
+	if (message.type === "getWorkTarget") return { type: "workTarget", error };
+	if (message.type === "renameWorkGroup") return { type: "workGroupRenamed", error };
 	return undefined;
 }
 
