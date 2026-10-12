@@ -13,6 +13,7 @@ import {
 import type { AgentTool } from "../pi/agent.js";
 import type { ToolResultMessage } from "../pi/models.js";
 import { ASK_USER_WHICH_ELEMENT_TOOL_DESCRIPTION } from "../prompts/prompts.js";
+import { getPageTab, selectWorkTab, taskContext } from "../tasks/client.js";
 import "../utils/i18n-extension.js";
 
 // ============================================================================
@@ -538,15 +539,13 @@ export class AskUserWhichElementTool implements AgentTool<typeof selectElementSc
 				throw new Error("Tool execution was aborted");
 			}
 
-			// Get the active tab
-			const [tab] = await chrome.tabs.query({
-				active: true,
-				currentWindow: true,
-			});
-
-			if (!tab || !tab.id) {
-				throw new Error("No active tab found");
+			const context = taskContext();
+			const page = await getPageTab();
+			if (!page) {
+				throw new Error(context.sessionId ? "No task tab yet. Navigate to a page first." : "No active tab found");
 			}
+			const revealed = context.sessionId ? await selectWorkTab(context.sessionId, page.id, true) : page;
+			const tab = { id: revealed.id, url: revealed.url };
 
 			// Check if we can execute scripts on this tab
 			if (

@@ -4,6 +4,8 @@
 
 Each task belongs to the tab it was opened on. The side panel is enabled for that tab, and for tabs the task later owns, and nowhere else. Two tabs can hold two tasks, including tabs in two windows. A session still has a single owner, so the same chat cannot be open on two tabs at once.
 
+The first navigation creates an inactive tab in a group titled with the chat name. Later navigations stay in that group. The agent lists and acts on those tabs only. `switchToTab` changes the task's current tab without focusing it; `reveal` or a click on a tab pill brings it forward. A popup opened by a group tab joins the group. If the user was looking at a different tab, focus returns there.
+
 ## Behavior
 
 **Toolbar icon or Ctrl/Cmd+Shift+S** on a tab with no task opens a new task on that tab. The same control on a tab that already has a task reopens it. The shortcut does not close the panel.

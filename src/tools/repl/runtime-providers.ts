@@ -6,6 +6,7 @@ import { ConsoleRuntimeProvider } from "../../sandbox/ConsoleRuntimeProvider.js"
 import { RUNTIME_MESSAGE_ROUTER } from "../../sandbox/RuntimeMessageRouter.js";
 import type { RuntimeMessage, RuntimeResponse, SandboxRuntimeProvider } from "../../sandbox/types.js";
 import { getSitegeistStorage } from "../../storage/app-storage.js";
+import { getPageTab } from "../../tasks/client.js";
 import type { NavigateParams, NavigateTool } from "../navigate.js";
 import { buildWrapperCode, checkUserScriptsAvailability } from "./userscripts-helpers.js";
 
@@ -107,7 +108,6 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 		const abortSignal = message.sandboxId ? this.sandboxAbortSignals.get(message.sandboxId) : undefined;
 		let cancelled = false;
 		let tabId: number | undefined;
-		let windowId: number | undefined;
 		let executionId: string | undefined;
 		let injectionStarted = false;
 		const executionController = new AbortController();
@@ -133,9 +133,6 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 		};
 		this.activeExecutions.set(sandboxId, { ownerSandboxId: message.sandboxId, cancel });
 		abortSignal?.addEventListener("abort", cancel, { once: true });
-		const tabActivated = (info: chrome.tabs.OnActivatedInfo) => {
-			if (tabId !== undefined && info.tabId !== tabId && info.windowId === windowId) cancel();
-		};
 		const tabRemoved = (removedTabId: number) => {
 			if (removedTabId === tabId) cancel();
 		};
@@ -149,14 +146,12 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 				respond({ success: false, error: apiCheck.message || "userScripts API not available" });
 				return;
 			}
-			const [tab] = await Promise.race([chrome.tabs.query({ active: true, currentWindow: true }), cancellation]);
-			if (tab?.id === undefined) {
+			const tab = await Promise.race([getPageTab(), cancellation]);
+			if (!tab) {
 				respond({ success: false, error: "No active tab found" });
 				return;
 			}
 			tabId = tab.id;
-			windowId = tab.windowId;
-			chrome.tabs.onActivated.addListener(tabActivated);
 			chrome.tabs.onRemoved.addListener(tabRemoved);
 			if (
 				tab.url?.startsWith("chrome://") ||
@@ -297,7 +292,6 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 			});
 		} finally {
 			abortSignal?.removeEventListener("abort", cancel);
-			chrome.tabs.onActivated.removeListener(tabActivated);
 			chrome.tabs.onRemoved.removeListener(tabRemoved);
 			this.activeExecutions.delete(sandboxId);
 			this.cleanup(sandboxId);

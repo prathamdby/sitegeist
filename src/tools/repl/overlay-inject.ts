@@ -1,3 +1,4 @@
+import { getPageTab } from "../../tasks/client.js";
 import { createOverlayAbortRequest, removeOverlayAbortRequest } from "./overlay-abort.js";
 import { createOverlayScript, removeOverlayScript } from "./overlay-content.js";
 
@@ -9,15 +10,8 @@ const OVERLAY_WORLD_ID = "sitegeist-repl-overlay";
  * @throws Error if no active tab is found
  */
 async function getActiveTabId(): Promise<number> {
-	const [tab] = await chrome.tabs.query({
-		active: true,
-		currentWindow: true,
-	});
-
-	if (!tab || !tab.id) {
-		throw new Error("No active tab found");
-	}
-
+	const tab = await getPageTab();
+	if (!tab) throw new Error("No active tab found");
 	return tab.id;
 }
 

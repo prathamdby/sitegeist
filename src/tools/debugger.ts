@@ -11,6 +11,7 @@ import {
 } from "../chat/renderers/index.js";
 import type { AgentTool } from "../pi/agent.js";
 import { StringEnum, type ToolResultMessage } from "../pi/models.js";
+import { getPageTab, taskContext } from "../tasks/client.js";
 
 // ============================================================================
 // TYPES
@@ -73,15 +74,13 @@ CRITICAL: Use browserjs() and repl tool for DOM manipulation. Use this ONLY for 
 			throw new Error("Debugger command aborted");
 		}
 
-		// Get active tab
-		const [tab] = await chrome.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-
-		if (!tab || !tab.id) {
-			throw new Error("No active tab found");
+		const page = await getPageTab();
+		if (!page) {
+			throw new Error(
+				taskContext().sessionId ? "No task tab yet. Navigate to a page first." : "No active tab found",
+			);
 		}
+		const tab = page;
 
 		try {
 			// Handle cookies action

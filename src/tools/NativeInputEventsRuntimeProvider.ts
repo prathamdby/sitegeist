@@ -1,5 +1,6 @@
 import { NATIVE_INPUT_EVENTS_DESCRIPTION } from "../prompts/prompts.js";
 import type { SandboxRuntimeProvider } from "../sandbox/types.js";
+import { getPageTab } from "../tasks/client.js";
 
 /**
  * Provides native input event functions to JavaScript REPL using Chrome Debugger API.
@@ -31,10 +32,8 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 	 * Get the currently active tab ID
 	 */
 	private async getActiveTabId(): Promise<number> {
-		const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-		if (!tab?.id) {
-			throw new Error("No active tab found");
-		}
+		const tab = await getPageTab();
+		if (!tab) throw new Error("No active tab found");
 		return tab.id;
 	}
 

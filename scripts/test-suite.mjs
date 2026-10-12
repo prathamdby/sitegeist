@@ -25,6 +25,7 @@ switch (selection) {
 			"artifact-preview-contract.test.mjs",
 			"debug-repl-contract.test.mjs",
 			"panel-locks.test.mjs",
+			"work-session.test.mjs",
 		];
 		if (suites.some((name) => name.startsWith("sandbox-"))) {
 			files.push("sandbox-routing.test.mjs", "sandbox-native-input.test.mjs");

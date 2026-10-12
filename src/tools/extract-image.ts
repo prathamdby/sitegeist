@@ -9,6 +9,7 @@ import {
 } from "../chat/renderers/index.js";
 import type { AgentTool, AgentToolResult } from "../pi/agent.js";
 import type { ImageContent, TextContent, ToolResultMessage } from "../pi/models.js";
+import { captureWorkTab, getPageTab, taskContext } from "../tasks/client.js";
 
 const EXTRACT_IMAGE_DESCRIPTION = `Extract images from the current page. Returns image data that you can see and analyze.
 
@@ -143,8 +144,11 @@ async function fetchAndResizeImage(src: string, maxWidth: number): Promise<Image
 	return { type: "image", data: base64, mimeType: "image/png" };
 }
 
-async function captureScreenshot(maxWidth: number, windowId: number): Promise<ImageContent> {
-	const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
+async function captureScreenshot(maxWidth: number, windowId: number | undefined): Promise<ImageContent> {
+	const context = taskContext();
+	const dataUrl = context.sessionId
+		? await captureWorkTab(context.sessionId)
+		: await chrome.tabs.captureVisibleTab(windowId ?? chrome.windows.WINDOW_ID_CURRENT, { format: "png" });
 	return fetchAndResizeImage(dataUrl, maxWidth);
 }
 
@@ -165,14 +169,18 @@ export class ExtractImageTool implements AgentTool<typeof extractImageSchema, Ex
 		const details: ExtractImageDetails = { mode: args.mode, selector: args.selector };
 
 		if (args.mode === "screenshot") {
-			if (!this.windowId) throw new Error("windowId not set on ExtractImageTool");
+			if (!taskContext().sessionId && this.windowId === undefined) {
+				throw new Error("windowId not set on ExtractImageTool");
+			}
 			const image = await captureScreenshot(maxWidth, this.windowId);
 			content.push(image);
 			content.push({ type: "text", text: `Screenshot captured (max ${maxWidth}px width)` });
 		} else if (args.mode === "selector") {
 			if (!args.selector) throw new Error("selector is required for 'selector' mode");
-			const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-			if (!tab?.id) throw new Error("No active tab");
+			const tab = await getPageTab();
+			if (!tab) {
+				throw new Error(taskContext().sessionId ? "No task tab yet. Navigate to a page first." : "No active tab");
+			}
 
 			const info = await getImageInfoFromPage(tab.id, args.selector);
 			if (typeof info === "string") throw new Error(info);

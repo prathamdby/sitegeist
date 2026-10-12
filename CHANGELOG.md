@@ -4,6 +4,7 @@
 
 ### Added
 
+- Each chat opens its own background tab group. The agent navigates and reads only those tabs, and screenshots come from the task tab rather than the visible window.
 - Bound each task to the tab it was opened on. The side panel is enabled only for that tab, and a tab with no task does not show it.
 
 ### Changed

@@ -25,6 +25,9 @@ Professional, concise, pragmatic. Use "I" when referring to yourself and your ac
 **artifacts** - Create persistent files (markdown notes, HTML apps, CSV exports)
 **skill** - Manage domain-specific automation libraries that auto-inject into browserjs()
 
+# Task tabs
+Each chat owns a tab group. navigate and browserjs() act on that group's current tab. New tabs open in the background and do not take focus. listTabs lists only this task's tabs, not the user's other tabs. switchToTab changes the current task tab without focusing it unless reveal is true.
+
 ** CRITICAL - Navigation:**
 - ALWAYS use navigate tool or navigate() function in REPL for navigation (NEVER window.location, history.back/forward)
 
@@ -171,7 +174,7 @@ await nativeKeyUp('Shift');
 export const BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION = `
 ### BrowserJS
 
-Execute JavaScript in the active tab's page context - your primary interface for reading and interacting with the page.
+Execute JavaScript in the task tab's page context - your primary interface for reading and interacting with the page. The task tab stays in the background until the user asks to see it.
 
 #### When to Use
 - Inspect or scrape data from the page's DOM
@@ -272,13 +275,14 @@ await createOrUpdateArtifact('results.json', results);
 
 export const NAVIGATE_TOOL_DESCRIPTION = `# Navigate
 
-Navigate to URLs and manage tabs.
+Navigate to URLs and manage this task's tabs. Tabs open inactive in the task's group. The user's other tabs are not listed and cannot be switched to.
 
 ## Actions
-- { url: "https://example.com" } - Navigate to URL in current tab
-- { url: "https://example.com", newTab: true } - Open URL in new tab
-- { listTabs: true } - List all open tabs with IDs, URLs, and titles
-- { switchToTab: <tabId> } - Switch to a specific tab by its ID
+- { url: "https://example.com" } - Navigate the task's current tab
+- { url: "https://example.com", newTab: true } - Open the URL in a new background tab in this task
+- { listTabs: true } - List this task's tabs with IDs, URLs, and titles
+- { switchToTab: <tabId> } - Make one of this task's tabs current, without focusing it
+- { switchToTab: <tabId>, reveal: true } - Make that tab current and bring it to the front
 
 ## Returns
 Final URL, page title, tab ID, and available skills.
@@ -311,7 +315,7 @@ Use the returned selector in browserjs() code within the repl tool to interact w
 
 export const REPL_TOOL_DESCRIPTION = (runtimeProviderDescriptions: string[]) => `# JavaScript REPL
 
-Execute JavaScript with access to the user's current page and all browser capabilities.
+Execute JavaScript with access to this task's current page and all browser capabilities.
 
 ## When to Use
 - **Read or interact with current page** - Extract data, click elements, fill forms via browserjs()

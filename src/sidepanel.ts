@@ -43,6 +43,7 @@ import { applyModelSelection, DEFAULT_MODELS, resolveInitialModel } from "./pi/s
 import { createStreamFn } from "./pi/stream.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
 import { SitegeistAppStorage, setAppStorage } from "./storage/app-storage.js";
+import { getWorkTarget, renameWorkGroup, setTaskContext, shareActiveTab } from "./tasks/client.js";
 import { DebuggerTool } from "./tools/debugger.js";
 import { createExtractDocumentTool } from "./tools/extract-document.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
@@ -89,6 +90,21 @@ let chatPanel: ChatPanel;
 let agentUnsubscribe: (() => void) | undefined;
 let currentWindowId: number;
 let currentHostTabId: number | undefined;
+let announcedTitle = "";
+
+setTaskContext(() => ({
+	sessionId: agent?.sessionId ?? currentSessionId,
+	ownerTabId: currentHostTabId,
+}));
+
+function syncGroupTitle(): void {
+	const marker = `${currentSessionId}:${currentTitle}`;
+	if (!currentSessionId || !currentTitle || announcedTitle === marker) return;
+	announcedTitle = marker;
+	void renameWorkGroup(currentSessionId, currentTitle).catch((error: unknown) => {
+		console.warn("[Sidepanel] Failed to rename the task group", error);
+	});
+}
 
 // Track which skills we've shown in full (skillName -> lastUpdated timestamp)
 // Reset when a new session/agent is created
@@ -422,6 +438,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 			if (currentSessionId) {
 				saveSession();
+				syncGroupTitle();
 			}
 
 			renderApp();
@@ -466,11 +483,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		onBeforeSend: async () => {
 			if (!agent) return;
 
-			// Get current tab info
-			const [tab] = await chrome.tabs.query({
-				active: true,
-				currentWindow: true,
-			});
+			const tab = currentSessionId
+				? await getWorkTarget(currentSessionId)
+				: (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
 			if (!tab?.url || tab.url.startsWith("chrome-extension://") || tab.url.startsWith("moz-extension://")) return;
 
 			// Find most recent navigation (either nav message or nav tool result)
@@ -583,6 +598,7 @@ const loadSession = (sessionId: string) => {
 };
 
 const newSession = () => {
+	announcedTitle = "";
 	if (currentHostTabId !== undefined) {
 		void port.sendMessage({ type: "clearHostBinding", tabId: currentHostTabId }).catch(() => {});
 	}
@@ -628,6 +644,22 @@ const renderApp = () => {
 						onClick: newSession,
 						title: "New Session",
 					})}
+					${
+						currentHostTabId !== undefined && currentSessionId
+							? Button({
+									variant: "ghost",
+									size: "sm",
+									children: "Use this tab",
+									onClick: () => {
+										if (currentHostTabId === undefined || !currentSessionId) return;
+										void shareActiveTab(currentSessionId, currentHostTabId).catch((error: unknown) => {
+											Toast.error(error instanceof Error ? error.message : "Could not use this tab");
+										});
+									},
+									title: "Add the active tab to this task",
+								})
+							: ""
+					}
 
 					${
 						currentTitle
@@ -644,6 +676,7 @@ const renderApp = () => {
 											if (newTitle && newTitle !== currentTitle && storage.sessions && currentSessionId) {
 												await storage.sessions.updateTitle(currentSessionId, newTitle);
 												currentTitle = newTitle;
+												syncGroupTitle();
 											}
 											isEditingTitle = false;
 											renderApp();
@@ -654,6 +687,7 @@ const renderApp = () => {
 												if (newTitle && newTitle !== currentTitle && storage.sessions && currentSessionId) {
 													await storage.sessions.updateTitle(currentSessionId, newTitle);
 													currentTitle = newTitle;
+													syncGroupTitle();
 												}
 												isEditingTitle = false;
 												renderApp();
@@ -717,35 +751,23 @@ const renderApp = () => {
 // ============================================================================
 
 // Listen for tab updates and insert navigation messages only when agent is running
-chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
-	// Only care about URL changes on the active tab while agent is working
-	// Ignore chrome-extension:// URLs (extension internal pages)
-	// Ignore tool-initiated navigations (handled by the navigate tool itself)
-	// Ignore tabs from other windows
-	if (
-		changeInfo.url &&
-		tab.active &&
-		tab.url &&
-		tab.windowId === currentWindowId &&
-		agent?.state.isStreaming &&
-		!tab.url.startsWith("chrome-extension://") &&
-		!tab.url.startsWith("moz-extension://") &&
-		!isToolNavigating()
-	) {
-		const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
-		agent.steer(navMessage);
-		console.log("Queued navigation message for tab switch to", tab.url);
+chrome.tabs.onUpdated.addListener(async (updatedTabId, changeInfo, tab) => {
+	if (!changeInfo.url || !tab.url || !agent?.state.isStreaming || isToolNavigating()) return;
+	if (tab.url.startsWith("chrome-extension://") || tab.url.startsWith("moz-extension://")) return;
+	if (currentSessionId) {
+		const target = await getWorkTarget(currentSessionId);
+		if (!target || updatedTabId !== target.id) return;
+	} else if (!tab.active || tab.windowId !== currentWindowId) {
+		return;
 	}
+	const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
+	agent.steer(navMessage);
 });
 
-// Listen for tab activation (user switches tabs) only when agent is running
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
-	// Ignore tab activations from other windows
+	if (currentSessionId) return;
 	if (activeInfo.windowId !== currentWindowId) return;
-
 	const tab = await chrome.tabs.get(activeInfo.tabId);
-	// Ignore chrome-extension:// URLs (extension internal pages)
-	// Ignore tool-initiated navigations (handled by the navigate tool itself)
 	if (
 		tab.url &&
 		agent?.state.isStreaming &&
@@ -755,7 +777,6 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 	) {
 		const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
 		agent.steer(navMessage);
-		console.log("Queued navigation message for tab switch to", tab.url);
 	}
 });
 
@@ -959,6 +980,7 @@ async function initApp() {
 			currentSessionId = sessionIdFromUrl;
 			const metadata = await storage.sessions.getMetadata(sessionIdFromUrl);
 			currentTitle = metadata?.title || "";
+			syncGroupTitle();
 
 			await createAgent({
 				systemPrompt: SYSTEM_PROMPT,

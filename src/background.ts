@@ -8,6 +8,8 @@ import {
 	rewriteLockOwner,
 	sidePanelPath,
 } from "./panel/locks.js";
+import { handleWorkMessage, startWorkSessions } from "./tasks/service.js";
+import type { WorkSession } from "./tasks/work-session.js";
 import { relayOverlayAbortMessage } from "./tools/repl/overlay-abort.js";
 import type {
 	BindingClearedMessage,
@@ -185,7 +187,9 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 		if (connected) rememberDisconnect(ownerTabId);
 	});
 	port.onMessage.addListener((msg: SidepanelToBackgroundMessage) => {
-		void cacheReady.then(() => handlePanelMessage(port, msg, ownerTabId));
+		void cacheReady.then(() => handlePanelMessage(port, msg, ownerTabId)).catch((error: unknown) => {
+			console.error("[Background] Panel message failed", error);
+		});
 	});
 	void cacheReady.then(() => {
 		if (disconnected) return;
@@ -194,7 +198,47 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 	});
 });
 
-function handlePanelMessage(port: chrome.runtime.Port, msg: SidepanelToBackgroundMessage, ownerTabId: number): void {
+async function bindWorkTab(session: WorkSession, tabId: number): Promise<void> {
+	await cacheReady;
+	const current = bindings[String(tabId)];
+	const keepHost = tabId === session.ownerTabId && current?.role === "host";
+	bindings[String(tabId)] = {
+		ownerTabId: session.ownerTabId,
+		sessionId: session.sessionId,
+		role: keepHost ? "host" : "work",
+	};
+	await persist();
+}
+
+async function ownerPromoted(session: WorkSession, previousOwnerTabId: number): Promise<void> {
+	await cacheReady;
+	locks = rewriteLockOwner(locks, previousOwnerTabId, session.ownerTabId);
+	if (locks[session.sessionId] === undefined) locks[session.sessionId] = session.ownerTabId;
+	bindings = retargetBindings(bindings, previousOwnerTabId, session.ownerTabId);
+	if (openPanels.has(previousOwnerTabId)) {
+		openPanels.delete(previousOwnerTabId);
+		openPanels.add(session.ownerTabId);
+	}
+	const count = panelRefcounts.get(previousOwnerTabId);
+	if (count !== undefined) {
+		panelRefcounts.delete(previousOwnerTabId);
+		panelRefcounts.set(session.ownerTabId, count);
+	}
+	await bindWorkTab(session, session.ownerTabId);
+	await chrome.sidePanel
+		.setOptions({
+			tabId: session.ownerTabId,
+			enabled: true,
+			path: sidePanelPath(session.ownerTabId, session.sessionId),
+		})
+		.catch(() => {});
+}
+
+async function handlePanelMessage(
+	port: chrome.runtime.Port,
+	msg: SidepanelToBackgroundMessage,
+	ownerTabId: number,
+): Promise<void> {
 	if (foreignPanelRequest(ownerTabId, msg)) {
 		if (msg.type === "acquireLock") {
 			const response: LockResultMessage = {
@@ -210,7 +254,16 @@ function handlePanelMessage(port: chrome.runtime.Port, msg: SidepanelToBackgroun
 		} else if (msg.type === "clearHostBinding") {
 			const response: BindingClearedMessage = { type: "bindingCleared", tabId: ownerTabId };
 			port.postMessage(response);
+		} else if (msg.type === "ensureWorkTab") {
+			port.postMessage({ type: "workTabResult", error: "That tab belongs to another task" });
+		} else if (msg.type === "shareActiveTab") {
+			port.postMessage({ type: "shareActiveTabResult", error: "That tab belongs to another task" });
 		}
+		return;
+	}
+	const workResponse = await handleWorkMessage(msg, ownerTabId);
+	if (workResponse) {
+		port.postMessage(workResponse);
 		return;
 	}
 	if (msg.type === "acquireLock") {
@@ -305,6 +358,8 @@ chrome.windows.onRemoved.addListener(() => {
 		await persist();
 	});
 });
+
+startWorkSessions({ bindWorkTab, ownerPromoted });
 
 chrome.commands.onCommand.addListener((command: string, tab?: chrome.tabs.Tab) => {
 	if (command !== "toggle-sidepanel") return;

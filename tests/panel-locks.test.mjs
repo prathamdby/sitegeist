@@ -36,6 +36,8 @@ test("a panel message for another tab is foreign to the connection", () => {
 	assert.equal(foreignPanelRequest(4, { type: "getBinding", tabId: 9 }), true);
 	assert.equal(foreignPanelRequest(4, { type: "clearHostBinding", tabId: 4 }), false);
 	assert.equal(foreignPanelRequest(4, { type: "getLockedSessions" }), false);
+	assert.equal(foreignPanelRequest(4, { type: "ensureWorkTab", ownerTabId: 9 }), true);
+	assert.equal(foreignPanelRequest(4, { type: "shareActiveTab", ownerTabId: 4 }), false);
 });
 
 test("releasing an owner drops only that owner's sessions", () => {

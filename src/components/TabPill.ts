@@ -5,16 +5,9 @@ export function TabPill(tab: TabInfo, clickable = true): TemplateResult {
 	const handleClick = async () => {
 		if (!clickable) return;
 		try {
-			// Activate the tab
+			const found = await chrome.tabs.get(tab.id);
 			await chrome.tabs.update(tab.id, { active: true });
-			// Focus the window containing the tab
-			if (tab.active === false) {
-				const tabs = await chrome.tabs.query({});
-				const foundTab = tabs.find((t: chrome.tabs.Tab) => t.id === tab.id);
-				if (foundTab?.windowId) {
-					await chrome.windows.update(foundTab.windowId, { focused: true });
-				}
-			}
+			await chrome.windows.update(found.windowId, { focused: true });
 		} catch (err) {
 			console.error("Failed to switch to tab:", err);
 		}

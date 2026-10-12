@@ -110,8 +110,8 @@ test("browserjs unregisters, settles once, and terminates the original tab on ab
 	provider.onExecutionEnd("parent-execution");
 });
 
-test("browserjs cancellation without terminate cleans up on tab/session/provider changes", async (t) => {
-	for (const reason of ["abort", "tab", "closed-tab", "session", "provider"]) {
+test("browserjs cancellation without terminate cleans up on close/session/provider changes", async (t) => {
+	for (const reason of ["abort", "closed-tab", "session", "provider"]) {
 		await t.test(reason, async () => {
 			let injected = false;
 			const h = harness({
@@ -128,8 +128,10 @@ test("browserjs cancellation without terminate cleans up on tab/session/provider
 			h.onActivated.emit({ tabId: 8, windowId: 99 });
 			await tick();
 			assert.equal(call.responses.length, 0, "Other windows must not cancel this execution");
+			h.onActivated.emit({ tabId: 8, windowId: 1 });
+			await tick();
+			assert.equal(call.responses.length, 0, "Switching tabs must not cancel this execution");
 			if (reason === "abort") controller.abort();
-			if (reason === "tab") h.onActivated.emit({ tabId: 8, windowId: 1 });
 			if (reason === "closed-tab") h.onRemoved.emit(7);
 			if (reason === "session") provider.onExecutionEnd("parent-execution");
 			if (reason === "provider") provider.cleanupAll();
@@ -633,6 +635,9 @@ test(
 			const switched = await context.newPage();
 			await switched.goto(`${url}/switch`);
 			await switched.bringToFront();
+			await target.locator("#sitegeist-repl-overlay").waitFor();
+			assert.equal(await target.locator("#sitegeist-repl-overlay").count(), 1);
+			await page.evaluate(() => window.sandboxRuntimeFixture.abortProduction());
 			const tabCancelled = await page.evaluate(() => window.sandboxRuntimeFixture.productionResult());
 			assert.match(tabCancelled.error, /cancelled/);
 			await target.locator("#sitegeist-repl-overlay").waitFor({ state: "detached" });

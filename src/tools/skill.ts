@@ -21,6 +21,7 @@ import { StringEnum, type ToolResultMessage } from "../pi/models.js";
 import { SKILL_TOOL_DESCRIPTION } from "../prompts/prompts.js";
 import { getSitegeistStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
+import { getPageTab } from "../tasks/client.js";
 import { defaultSkills } from "./default-skills.js";
 
 const getSkills = () => getSitegeistStorage().skills;
@@ -205,10 +206,7 @@ export const skillTool: AgentTool<typeof skillParamsSchema, any> = {
 	parameters: skillParamsSchema,
 	execute: async (_toolCallId: string, args: SkillParams, signal?: AbortSignal) => {
 		const skillsRepo = getSkills();
-		const [tab] = await chrome.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
+		const tab = await getPageTab();
 		const currentUrl = tab?.url || "";
 
 		switch (args.action) {

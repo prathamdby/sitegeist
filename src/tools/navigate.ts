@@ -10,6 +10,7 @@ import type { ToolResultMessage } from "../pi/models.js";
 import { NAVIGATE_TOOL_DESCRIPTION } from "../prompts/prompts.js";
 import { getSitegeistStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
+import { ensureWorkTab, listWorkTabs, selectWorkTab, taskContext } from "../tasks/client.js";
 import { formatSkills } from "../utils/format-skills.js";
 import "../utils/i18n-extension.js";
 
@@ -37,6 +38,11 @@ const navigateSchema = Type.Object({
 	newTab: Type.Optional(Type.Boolean({ description: "Set to true to open URL in a new tab instead of current tab" })),
 	listTabs: Type.Optional(Type.Boolean({ description: "Set to true to list all open tabs" })),
 	switchToTab: Type.Optional(Type.Number({ description: "Tab ID to switch to (get IDs from listTabs)" })),
+	reveal: Type.Optional(
+		Type.Boolean({
+			description: "With switchToTab, focus that tab for the user. Omit it to keep the task in the background.",
+		}),
+	),
 });
 
 export type NavigateParams = Static<typeof navigateSchema>;
@@ -78,16 +84,33 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 			throw new Error("Navigation aborted");
 		}
 
+		const task = this.task();
+
 		// Handle list tabs action
-		if ("listTabs" in args) {
-			return this.listTabs();
+		if ("listTabs" in args && args.listTabs) {
+			return task ? this.listTaskTabs(task.sessionId) : this.listTabs();
 		}
 
 		// Handle switch tab action
 		if ("switchToTab" in args && args.switchToTab !== undefined) {
 			markNavigationStart();
 			try {
-				return await this.switchToTab(args.switchToTab);
+				return task
+					? await this.switchTaskTab(task.sessionId, args.switchToTab, args.reveal === true)
+					: await this.switchToTab(args.switchToTab);
+			} finally {
+				markNavigationEnd();
+			}
+		}
+
+		if (task && "url" in args && args.url !== undefined) {
+			markNavigationStart();
+			try {
+				const opened = await ensureWorkTab(task.sessionId, task.ownerTabId, args.url, args.newTab === true);
+				const finalUrl = opened.navigated
+					? await this.waitForLoad(opened.tab.id, signal)
+					: await this.navigateToUrl(opened.tab.id, args.url, signal);
+				return await this.describePage(finalUrl, opened.tab.id, args.newTab === true);
 			} finally {
 				markNavigationEnd();
 			}
@@ -129,18 +152,26 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 			markNavigationEnd();
 		}
 
-		// Get updated tab info using query (better cross-browser support)
-		const updatedTabs = await chrome.tabs.query({});
-		const updatedTab = updatedTabs.find((t: chrome.tabs.Tab) => t.id === targetTabId);
+		return this.describePage(finalUrl, targetTabId, "newTab" in args && Boolean(args.newTab));
+	}
+
+	private task(): { sessionId: string; ownerTabId: number } | undefined {
+		const context = taskContext();
+		if (!context.sessionId || context.ownerTabId === undefined) return undefined;
+		return { sessionId: context.sessionId, ownerTabId: context.ownerTabId };
+	}
+
+	private async describePage(
+		finalUrl: string,
+		targetTabId: number,
+		openedNewTab: boolean,
+	): Promise<{ content: Array<{ type: "text"; text: string }>; details: NavigateResult }> {
+		const updatedTab = await chrome.tabs.get(targetTabId).catch(() => undefined);
 		const title = updatedTab?.title || "Untitled";
 		const favicon = updatedTab?.favIconUrl;
-
-		// Get skills for the final URL
 		const skillsRepo = getSitegeistStorage().skills;
 		const matchingSkills = await skillsRepo.getSkillsForUrl(finalUrl);
 		const { newOrUpdated, unchanged, formattedText: skillsOutput } = formatSkills(matchingSkills);
-
-		// Build skills array with full details for all skills (needed for UI rendering)
 		const skills = [
 			...newOrUpdated.map((s) => ({
 				name: s.name,
@@ -153,26 +184,47 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 				fullDetails: s,
 			})),
 		];
-
-		const details: NavigateResult = {
-			finalUrl,
-			title,
-			favicon,
-			tabId: targetTabId,
-			skills,
-		};
-
-		// Build output message
-		let output = "";
-		if ("newTab" in args && args.newTab) {
-			output = `Opened in new tab: ${finalUrl} (tab ${targetTabId})\n`;
-		} else {
-			output = `Navigated to: ${finalUrl} (tab ${targetTabId})\n`;
-		}
-
-		output += `\n${skillsOutput}`;
-
+		const details: NavigateResult = { finalUrl, title, favicon, tabId: targetTabId, skills };
+		const output = openedNewTab
+			? `Opened in new tab: ${finalUrl} (tab ${targetTabId})\n\n${skillsOutput}`
+			: `Navigated to: ${finalUrl} (tab ${targetTabId})\n\n${skillsOutput}`;
 		return { content: [{ type: "text", text: output }], details };
+	}
+
+	private async waitForLoad(tabId: number, signal?: AbortSignal): Promise<string> {
+		return new Promise((resolve, reject) => {
+			let settled = false;
+			const finish = (url: string) => {
+				if (settled) return;
+				settled = true;
+				chrome.webNavigation.onDOMContentLoaded.removeListener(listener);
+				signal?.removeEventListener("abort", abortListener);
+				resolve(url);
+			};
+			const fail = (error: Error) => {
+				if (settled) return;
+				settled = true;
+				chrome.webNavigation.onDOMContentLoaded.removeListener(listener);
+				signal?.removeEventListener("abort", abortListener);
+				reject(error);
+			};
+			const listener = (details: chrome.webNavigation.WebNavigationFramedCallbackDetails) => {
+				if (details.tabId === tabId && details.frameId === 0) finish(details.url);
+			};
+			const abortListener = () => fail(new Error("Aborted"));
+			if (signal?.aborted) {
+				reject(new Error("Aborted"));
+				return;
+			}
+			signal?.addEventListener("abort", abortListener);
+			chrome.webNavigation.onDOMContentLoaded.addListener(listener);
+			chrome.tabs
+				.get(tabId)
+				.then((tab) => {
+					if (tab.status === "complete" && tab.url && tab.url !== "about:blank") finish(tab.url);
+				})
+				.catch((error: Error) => fail(error));
+		});
 	}
 
 	private async navigateToUrl(tabId: number, url: string, signal?: AbortSignal): Promise<string> {
@@ -257,6 +309,49 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 		});
 	}
 
+	private async listTaskTabs(
+		sessionId: string,
+	): Promise<{ content: Array<{ type: "text"; text: string }>; details: NavigateResult }> {
+		const tabs = await listWorkTabs(sessionId);
+		const tabInfos: TabInfo[] = tabs.map((tab) => ({
+			id: tab.id,
+			url: tab.url,
+			title: tab.title,
+			active: tab.active,
+			favicon: tab.favIconUrl,
+		}));
+		return this.formatTabList(tabInfos, "task");
+	}
+
+	private async switchTaskTab(
+		sessionId: string,
+		tabId: number,
+		reveal: boolean,
+	): Promise<{ content: Array<{ type: "text"; text: string }>; details: NavigateResult }> {
+		const numericTabId = typeof tabId === "string" ? parseInt(tabId, 10) : tabId;
+		const tab = await selectWorkTab(sessionId, numericTabId, reveal);
+		const described = await this.describePage(tab.url, tab.id, false);
+		const skills = described.content[0].text.split("\n\n").slice(1).join("\n\n");
+		const lead = reveal ? `Brought tab ${tab.id} into view` : `Selected task tab ${tab.id}`;
+		described.content[0].text = `${lead}: ${tab.title}\nURL: ${tab.url}\n\n${skills}`;
+		described.details.switchedToTab = tab.id;
+		return described;
+	}
+
+	private formatTabList(
+		tabInfos: TabInfo[],
+		scope: "task" | "window",
+	): { content: Array<{ type: "text"; text: string }>; details: NavigateResult } {
+		const label = scope === "task" ? "task tabs" : "open tabs";
+		let output = `Found ${tabInfos.length} ${label}:\n`;
+		for (const tab of tabInfos) {
+			const activeMarker = tab.active ? " [ACTIVE]" : "";
+			output += `  - Tab ${tab.id}: ${tab.title}${activeMarker}\n`;
+			output += `    URL: ${tab.url}\n`;
+		}
+		return { content: [{ type: "text", text: output }], details: { tabs: tabInfos } };
+	}
+
 	private async listTabs(): Promise<{ content: Array<{ type: "text"; text: string }>; details: NavigateResult }> {
 		const tabs = await chrome.tabs.query({});
 
@@ -273,18 +368,7 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 				favicon: t.favIconUrl,
 			}));
 
-		const details: NavigateResult = {
-			tabs: tabInfos,
-		};
-
-		let output = `Found ${tabInfos.length} open tabs:\n`;
-		for (const tab of tabInfos) {
-			const activeMarker = tab.active ? " [ACTIVE]" : "";
-			output += `  - Tab ${tab.id}: ${tab.title}${activeMarker}\n`;
-			output += `    URL: ${tab.url}\n`;
-		}
-
-		return { content: [{ type: "text", text: output }], details };
+		return this.formatTabList(tabInfos, "window");
 	}
 
 	private async switchToTab(

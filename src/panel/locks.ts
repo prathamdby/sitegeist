@@ -83,7 +83,9 @@ export function foreignPanelRequest(
 	portOwnerTabId: number,
 	message: { type: string; ownerTabId?: number; tabId?: number },
 ): boolean {
-	if (message.type === "acquireLock") return message.ownerTabId !== portOwnerTabId;
+	if (message.type === "acquireLock" || message.type === "ensureWorkTab" || message.type === "shareActiveTab") {
+		return message.ownerTabId !== portOwnerTabId;
+	}
 	if (message.type === "getBinding" || message.type === "clearHostBinding") return message.tabId !== portOwnerTabId;
 	return false;
 }

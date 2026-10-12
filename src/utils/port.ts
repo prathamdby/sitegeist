@@ -70,6 +70,101 @@ export interface BindingClearedMessage {
 	tabId: number;
 }
 
+export interface WorkTabInfo {
+	id: number;
+	windowId: number;
+	url: string;
+	title: string;
+	favIconUrl?: string;
+	active: boolean;
+}
+
+export interface EnsureWorkTabMessage {
+	type: "ensureWorkTab";
+	sessionId: string;
+	ownerTabId: number;
+	url: string;
+	newTab: boolean;
+}
+
+export interface WorkTabResultMessage {
+	type: "workTabResult";
+	tab?: WorkTabInfo;
+	navigated?: boolean;
+	error?: string;
+}
+
+export interface ListWorkTabsMessage {
+	type: "listWorkTabs";
+	sessionId: string;
+}
+
+export interface WorkTabListMessage {
+	type: "workTabList";
+	tabs: WorkTabInfo[];
+	error?: string;
+}
+
+export interface SelectWorkTabMessage {
+	type: "selectWorkTab";
+	sessionId: string;
+	tabId: number;
+	reveal: boolean;
+}
+
+export interface WorkTabSelectedMessage {
+	type: "workTabSelected";
+	tab?: WorkTabInfo;
+	error?: string;
+}
+
+export interface GetWorkTargetMessage {
+	type: "getWorkTarget";
+	sessionId: string;
+}
+
+export interface WorkTargetMessage {
+	type: "workTarget";
+	tabId?: number;
+	windowId?: number;
+	url?: string;
+	title?: string;
+	favIconUrl?: string;
+}
+
+export interface ShareActiveTabMessage {
+	type: "shareActiveTab";
+	sessionId: string;
+	ownerTabId: number;
+}
+
+export interface ShareActiveTabResultMessage {
+	type: "shareActiveTabResult";
+	tab?: WorkTabInfo;
+	error?: string;
+}
+
+export interface RenameWorkGroupMessage {
+	type: "renameWorkGroup";
+	sessionId: string;
+	title: string;
+}
+
+export interface WorkGroupRenamedMessage {
+	type: "workGroupRenamed";
+}
+
+export interface CaptureWorkTabMessage {
+	type: "captureWorkTab";
+	sessionId: string;
+}
+
+export interface WorkTabCaptureMessage {
+	type: "workTabCapture";
+	dataUrl?: string;
+	error?: string;
+}
+
 // ============================================================================
 // DERIVED TYPES
 // ============================================================================
@@ -82,7 +177,14 @@ export type MessagePair =
 	| { request: AcquireLockMessage; response: LockResultMessage }
 	| { request: GetLockedSessionsMessage; response: LockedSessionsMessage }
 	| { request: GetBindingMessage; response: BindingResultMessage }
-	| { request: ClearHostBindingMessage; response: BindingClearedMessage };
+	| { request: ClearHostBindingMessage; response: BindingClearedMessage }
+	| { request: EnsureWorkTabMessage; response: WorkTabResultMessage }
+	| { request: ListWorkTabsMessage; response: WorkTabListMessage }
+	| { request: SelectWorkTabMessage; response: WorkTabSelectedMessage }
+	| { request: GetWorkTargetMessage; response: WorkTargetMessage }
+	| { request: ShareActiveTabMessage; response: ShareActiveTabResultMessage }
+	| { request: RenameWorkGroupMessage; response: WorkGroupRenamedMessage }
+	| { request: CaptureWorkTabMessage; response: WorkTabCaptureMessage };
 
 /**
  * All messages that can be sent from sidepanel to background.
@@ -114,6 +216,13 @@ export const REQUEST_TO_RESPONSE_TYPE: Record<
 	getLockedSessions: "lockedSessions",
 	getBinding: "bindingResult",
 	clearHostBinding: "bindingCleared",
+	ensureWorkTab: "workTabResult",
+	listWorkTabs: "workTabList",
+	selectWorkTab: "workTabSelected",
+	getWorkTarget: "workTarget",
+	shareActiveTab: "shareActiveTabResult",
+	renameWorkGroup: "workGroupRenamed",
+	captureWorkTab: "workTabCapture",
 };
 
 // ============================================================================

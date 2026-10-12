@@ -103,6 +103,9 @@ const fixture = {
 	abort(id = "browser-fixture") {
 		executions.get(id)?.controller.abort();
 	},
+	abortProduction() {
+		productionController?.abort();
+	},
 	disconnect(id = "browser-fixture") {
 		executions.get(id)?.element.remove();
 	},
