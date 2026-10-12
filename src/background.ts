@@ -187,9 +187,11 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 		if (connected) rememberDisconnect(ownerTabId);
 	});
 	port.onMessage.addListener((msg: SidepanelToBackgroundMessage) => {
-		void cacheReady.then(() => handlePanelMessage(port, msg, ownerTabId)).catch((error: unknown) => {
-			console.error("[Background] Panel message failed", error);
-		});
+		void cacheReady
+			.then(() => handlePanelMessage(port, msg, ownerTabId))
+			.catch((error: unknown) => {
+				console.error("[Background] Panel message failed", error);
+			});
 	});
 	void cacheReady.then(() => {
 		if (disconnected) return;
