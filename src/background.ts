@@ -1,6 +1,7 @@
 import {
 	clearHostBinding,
 	decideLock,
+	foreignPanelRequest,
 	type PanelBinding,
 	releaseLocksForOwner,
 	retargetBindings,
@@ -50,15 +51,25 @@ let locks: Record<string, number> = {};
 const panelRefcounts = new Map<number, number>();
 
 let cacheReady: Promise<void> = Promise.resolve();
+let cacheLoaded = false;
 
 function openPanelForTab(tabId: number): void {
+	if (!cacheLoaded) {
+		void cacheReady.then(() => openPanelForTab(tabId));
+		return;
+	}
 	const binding = bindings[String(tabId)];
 	const ownerTabId = binding?.ownerTabId ?? tabId;
 	const path = sidePanelPath(ownerTabId, binding?.sessionId);
-	void chrome.sidePanel.setOptions({ tabId, enabled: true, path });
-	void chrome.sidePanel.open({ tabId }).catch((error: unknown) => {
-		console.error("[Background] Failed to open side panel", error);
-	});
+	void chrome.sidePanel.setOptions({ tabId, enabled: true, path }).then(
+		() =>
+			chrome.sidePanel.open({ tabId }).catch((error: unknown) => {
+				console.error("[Background] Failed to open side panel", error);
+			}),
+		(error: unknown) => {
+			console.error("[Background] Failed to set side panel options", error);
+		},
+	);
 }
 
 async function persist(): Promise<void> {
@@ -107,7 +118,32 @@ async function loadCache(): Promise<void> {
 		openPanels = new Set((data[OPEN_PANELS_KEY] as number[] | undefined) ?? []);
 		bindings = (data[BINDINGS_KEY] as Record<string, PanelBinding> | undefined) ?? {};
 	}
+	await pruneDeadTabs();
 	await applyPanelOptions();
+	cacheLoaded = true;
+}
+
+async function pruneDeadTabs(): Promise<void> {
+	const tabs = await chrome.tabs.query({});
+	const live = new Set(tabs.flatMap((tab) => (tab.id === undefined ? [] : [tab.id])));
+	let changed = false;
+	for (const key of Object.keys(bindings)) {
+		if (live.has(Number(key))) continue;
+		delete bindings[key];
+		changed = true;
+	}
+	for (const owner of [...openPanels]) {
+		if (live.has(owner)) continue;
+		openPanels.delete(owner);
+		panelRefcounts.delete(owner);
+		changed = true;
+	}
+	for (const owner of new Set(Object.values(locks))) {
+		if (live.has(owner)) continue;
+		locks = releaseLocksForOwner(locks, owner);
+		changed = true;
+	}
+	if (changed) await persist();
 }
 
 cacheReady = loadCache().catch((error: unknown) => {
@@ -127,9 +163,6 @@ function rememberDisconnect(ownerTabId: number): void {
 		return;
 	}
 	panelRefcounts.delete(ownerTabId);
-	openPanels.delete(ownerTabId);
-	locks = releaseLocksForOwner(locks, ownerTabId);
-	void persist();
 }
 
 function bindOwner(sessionId: string, ownerTabId: number): void {
@@ -152,7 +185,7 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 		if (connected) rememberDisconnect(ownerTabId);
 	});
 	port.onMessage.addListener((msg: SidepanelToBackgroundMessage) => {
-		void cacheReady.then(() => handlePanelMessage(port, msg));
+		void cacheReady.then(() => handlePanelMessage(port, msg, ownerTabId));
 	});
 	void cacheReady.then(() => {
 		if (disconnected) return;
@@ -161,15 +194,33 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 	});
 });
 
-function handlePanelMessage(port: chrome.runtime.Port, msg: SidepanelToBackgroundMessage): void {
+function handlePanelMessage(port: chrome.runtime.Port, msg: SidepanelToBackgroundMessage, ownerTabId: number): void {
+	if (foreignPanelRequest(ownerTabId, msg)) {
+		if (msg.type === "acquireLock") {
+			const response: LockResultMessage = {
+				type: "lockResult",
+				sessionId: msg.sessionId,
+				success: false,
+				ownerTabId,
+			};
+			port.postMessage(response);
+		} else if (msg.type === "getBinding") {
+			const response: BindingResultMessage = { type: "bindingResult", tabId: ownerTabId };
+			port.postMessage(response);
+		} else if (msg.type === "clearHostBinding") {
+			const response: BindingClearedMessage = { type: "bindingCleared", tabId: ownerTabId };
+			port.postMessage(response);
+		}
+		return;
+	}
 	if (msg.type === "acquireLock") {
-		const decision = decideLock(locks, openPanels, msg.sessionId, msg.ownerTabId);
+		const decision = decideLock(locks, openPanels, msg.sessionId, ownerTabId);
 		const response: LockResultMessage = decision.granted
 			? { type: "lockResult", sessionId: msg.sessionId, success: true }
 			: { type: "lockResult", sessionId: msg.sessionId, success: false, ownerTabId: decision.ownerTabId };
 		if (decision.granted) {
-			locks[msg.sessionId] = msg.ownerTabId;
-			bindOwner(msg.sessionId, msg.ownerTabId);
+			locks[msg.sessionId] = ownerTabId;
+			bindOwner(msg.sessionId, ownerTabId);
 			void persist();
 		}
 		port.postMessage(response);
@@ -181,10 +232,10 @@ function handlePanelMessage(port: chrome.runtime.Port, msg: SidepanelToBackgroun
 		return;
 	}
 	if (msg.type === "getBinding") {
-		const binding = bindings[String(msg.tabId)];
+		const binding = bindings[String(ownerTabId)];
 		const response: BindingResultMessage = {
 			type: "bindingResult",
-			tabId: msg.tabId,
+			tabId: ownerTabId,
 			ownerTabId: binding?.ownerTabId,
 			sessionId: binding?.sessionId,
 			role: binding?.role,
@@ -193,9 +244,9 @@ function handlePanelMessage(port: chrome.runtime.Port, msg: SidepanelToBackgroun
 		return;
 	}
 	if (msg.type === "clearHostBinding") {
-		bindings = clearHostBinding(bindings, msg.tabId);
+		bindings = clearHostBinding(bindings, ownerTabId);
 		void persist();
-		const response: BindingClearedMessage = { type: "bindingCleared", tabId: msg.tabId };
+		const response: BindingClearedMessage = { type: "bindingCleared", tabId: ownerTabId };
 		port.postMessage(response);
 	}
 }

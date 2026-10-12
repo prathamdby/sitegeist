@@ -17,11 +17,20 @@ const mockedChrome = {
 			},
 			onDisconnect: noListener,
 			postMessage: (message: SidepanelToBackgroundMessage) => {
+				const params = new URLSearchParams(location.search);
 				const response: BackgroundToSidepanelMessage =
 					message.type === "acquireLock"
-						? { type: "lockResult", sessionId: message.sessionId, success: true }
+						? params.get("lock") === "denied"
+							? { type: "lockResult", sessionId: message.sessionId, success: false, ownerTabId: 99 }
+							: { type: "lockResult", sessionId: message.sessionId, success: true }
 						: message.type === "getBinding"
-							? { type: "bindingResult", tabId: message.tabId }
+							? {
+									type: "bindingResult",
+									tabId: message.tabId,
+									sessionId: params.get("binding") ?? undefined,
+									ownerTabId: message.tabId,
+									role: "host",
+								}
 							: message.type === "clearHostBinding"
 								? { type: "bindingCleared", tabId: message.tabId }
 								: { type: "lockedSessions", locks: {} };

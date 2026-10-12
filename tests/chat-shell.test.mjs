@@ -801,3 +801,36 @@ test("actual sidepanel header opens history, persists Enter title, cancels Escap
 		await page.close();
 	}
 });
+
+test("a session locked on another tab starts a fresh task", async () => {
+	const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+	page.on("pageerror", (error) => console.error(error));
+	await page.route("https://**", (route) => route.abort());
+	try {
+		await page.goto(`${origin}/header?session=header-fixture&lock=denied`);
+		await page.locator("welcome-message").waitFor();
+		assert.equal(await page.getByTitle("Click to edit title").count(), 0);
+		assert.equal(
+			await page.evaluate(
+				async () => (await window.headerFixture.storage.sessions.getMetadata("header-fixture")).title,
+			),
+			"Fixture original title",
+		);
+	} finally {
+		await page.close();
+	}
+});
+
+test("a stored tab binding restores that session", async () => {
+	const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+	page.on("pageerror", (error) => console.error(error));
+	await page.route("https://**", (route) => route.abort());
+	try {
+		await page.goto(`${origin}/header?binding=header-fixture`);
+		const title = page.getByTitle("Click to edit title");
+		await title.waitFor();
+		assert.equal(await title.textContent().then((value) => value.trim()), "Fixture original title");
+	} finally {
+		await page.close();
+	}
+});

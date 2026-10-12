@@ -3,6 +3,7 @@ import test from "node:test";
 import {
 	clearHostBinding,
 	decideLock,
+	foreignPanelRequest,
 	parseHostTab,
 	releaseLocksForOwner,
 	retargetBindings,
@@ -27,6 +28,14 @@ test("lock grants to a free session, the current owner, or a closed owner", () =
 	assert.deepEqual(decideLock(locks, open, "a", 4), { granted: true });
 	assert.deepEqual(decideLock(locks, open, "b", 7), { granted: true });
 	assert.deepEqual(decideLock(locks, open, "a", 7), { granted: false, ownerTabId: 4 });
+});
+
+test("a panel message for another tab is foreign to the connection", () => {
+	assert.equal(foreignPanelRequest(4, { type: "acquireLock", ownerTabId: 4 }), false);
+	assert.equal(foreignPanelRequest(4, { type: "acquireLock", ownerTabId: 9 }), true);
+	assert.equal(foreignPanelRequest(4, { type: "getBinding", tabId: 9 }), true);
+	assert.equal(foreignPanelRequest(4, { type: "clearHostBinding", tabId: 4 }), false);
+	assert.equal(foreignPanelRequest(4, { type: "getLockedSessions" }), false);
 });
 
 test("releasing an owner drops only that owner's sessions", () => {

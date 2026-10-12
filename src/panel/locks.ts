@@ -79,6 +79,15 @@ export function retargetBindings(
 	return next;
 }
 
+export function foreignPanelRequest(
+	portOwnerTabId: number,
+	message: { type: string; ownerTabId?: number; tabId?: number },
+): boolean {
+	if (message.type === "acquireLock") return message.ownerTabId !== portOwnerTabId;
+	if (message.type === "getBinding" || message.type === "clearHostBinding") return message.tabId !== portOwnerTabId;
+	return false;
+}
+
 export function clearHostBinding(bindings: Record<string, PanelBinding>, tabId: number): Record<string, PanelBinding> {
 	const current = bindings[String(tabId)];
 	if (!current || current.role !== "host" || current.ownerTabId !== tabId) return bindings;

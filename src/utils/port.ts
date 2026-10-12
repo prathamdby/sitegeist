@@ -130,7 +130,7 @@ const responseHandlers = new Map<string, (msg: BackgroundToSidepanelMessage) => 
  */
 export function initialize(ownerTabId: number): void {
 	currentOwnerTabId = ownerTabId;
-	connect();
+	if (!port) port = connect();
 }
 
 /**
@@ -157,7 +157,7 @@ function connect(): chrome.runtime.Port {
 	// Set up disconnect listener
 	tmpPort.onDisconnect.addListener(() => {
 		console.log(`[Port] Disconnected (likely due to inactivity timeout) (${new Date().toISOString()})`);
-		port = null;
+		if (port === tmpPort) port = null;
 	});
 
 	console.log(`[Port] Connected (${new Date().toISOString()})`);

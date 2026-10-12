@@ -12,7 +12,7 @@ Each task belongs to the tab it was opened on. The side panel is enabled for tha
 
 **New chat** stays on the same tab. The previous chat remains locked to any work tabs that still belong to it.
 
-Locks release when the panel disconnects, the owner tab closes, or the window goes away. A lock whose owner panel is no longer connected can be taken by the next requester.
+Locks stay with the owner tab while that tab exists. An idle port disconnect does not release them. They drop when the owner tab closes, the window goes away, or startup finds the tab already gone.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ The service worker (`src/background.ts`) stores three maps in `chrome.storage.se
 
 An in-memory copy of the bindings lets the toolbar click call `chrome.sidePanel.setOptions` and `chrome.sidePanel.open({ tabId })` in the same turn. The manifest has no default side panel path. Default panel options stay disabled, and owned tabs opt in with `sidepanel.html?hostTab=<id>`.
 
-The panel connects with `chrome.runtime.connect({ name: "sidepanel:<ownerTabId>" })`. `src/utils/port.ts` sends `acquireLock`, `getLockedSessions`, `getBinding`, and `clearHostBinding`. Disconnect drops that tab's refcount and, at zero, releases its locks.
+The panel connects with `chrome.runtime.connect({ name: "sidepanel:<ownerTabId>" })`. `src/utils/port.ts` sends `acquireLock`, `getLockedSessions`, `getBinding`, and `clearHostBinding`. The service worker uses the port name as the owner tab and ignores a different tab id in the message. Disconnect drops that connection's refcount and leaves the lock in place.
 
 On the first wake after the window-scoped design, `panel_model` is set to `tab` and the old lock map is cleared so a window id is not treated as a tab id.
 
