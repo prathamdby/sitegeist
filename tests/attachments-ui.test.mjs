@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -11,7 +12,16 @@ import * as XLSX from "xlsx";
 import { documentFixtures } from "./attachments-ui-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const work = join(process.env.HOME, ".capy/work/attachments-ui");
+let work;
+let diagnostics;
+let ownedDiagnostics;
+
+function ownedDirectory(prefix) {
+	const directory = mkdtempSync(join(tmpdir(), prefix));
+	if (lstatSync(directory).isSymbolicLink()) throw new Error(`scratch directory is a symlink: ${directory}`);
+	chmodSync(directory, 0o700);
+	return directory;
+}
 const renders = process.env.ATTACHMENT_RENDER_DIRECTORY;
 const recorded = JSON.parse(readFileSync(join(root, "tests/fixtures/contracts/attachments-ui.json"), "utf8"));
 let browser;
@@ -76,7 +86,12 @@ const attachments = [
 ];
 
 before(async () => {
-	mkdirSync(work, { recursive: true });
+	work = ownedDirectory("sitegeist-attachments-ui-");
+	if (renders) diagnostics = renders;
+	else {
+		ownedDiagnostics = ownedDirectory("sitegeist-attachments-diagnostics-");
+		diagnostics = ownedDiagnostics;
+	}
 	if (renders) mkdirSync(renders, { recursive: true });
 	execFileSync(`${root}node_modules/.bin/tailwindcss`, ["-i", `${root}src/app.css`, "-o", join(work, "app.css")], {
 		timeout: 30000,
@@ -129,8 +144,16 @@ before(async () => {
 });
 
 after(async () => {
-	await browser?.close();
-	await new Promise((resolve) => server?.close(resolve) ?? resolve());
+	try {
+		try {
+			await browser?.close();
+		} finally {
+			await new Promise((resolve) => server?.close(resolve) ?? resolve());
+		}
+	} finally {
+		if (work) rmSync(work, { recursive: true, force: true });
+		if (ownedDiagnostics) rmSync(ownedDiagnostics, { recursive: true, force: true });
+	}
 });
 
 async function fixture(width = 1200, dark = false) {
@@ -188,7 +211,7 @@ test("attachment baseline captures public DOM, layout and controls", { skip: !re
 			await page.keyboard.press("Escape");
 			await page.locator("attachment-overlay").waitFor({ state: "detached" });
 		}
-		writeFileSync(join(work, `measurement-${prefix}.json`), JSON.stringify(measurements, null, 2));
+		writeFileSync(join(diagnostics, `measurement-${prefix}.json`), JSON.stringify(measurements, null, 2));
 		await page.close();
 	}
 	assert.ok(true);
@@ -251,7 +274,7 @@ test("attachment baseline document previews, toggles, errors and loading states"
 		id: "pdf-error",
 		html: await page.locator("attachment-overlay").evaluate((element) => element.outerHTML),
 	});
-	writeFileSync(join(work, `documents-after.json`), JSON.stringify(observations, null, 2));
+	writeFileSync(join(diagnostics, `documents-after.json`), JSON.stringify(observations, null, 2));
 	await page.close();
 });
 
@@ -296,7 +319,7 @@ test("attachment baseline missing text, fallback and deferred loading probe", {}
 		),
 		recorded.fallback,
 	);
-	writeFileSync(join(work, "fallback-after.json"), JSON.stringify(observations, null, 2));
+	writeFileSync(join(diagnostics, "fallback-after.json"), JSON.stringify(observations, null, 2));
 	await page.close();
 });
 
@@ -327,7 +350,7 @@ test("attachment baseline localization probe", {}, async () => {
 		{ remove: observations.remove, files: observations.files.map((text) => text.replace(/\s+/g, " ").trim()) },
 		recorded.locale,
 	);
-	writeFileSync(join(work, "locale-after.json"), JSON.stringify(observations, null, 2));
+	writeFileSync(join(diagnostics, "locale-after.json"), JSON.stringify(observations, null, 2));
 	await page.close();
 });
 

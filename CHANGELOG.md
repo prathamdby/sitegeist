@@ -28,6 +28,7 @@
 
 - Removed the marketing site, site-specific development and deployment tooling, and website-backed extension update links.
 - Removed Gemini CLI subscription login and the Gemini CLI/Antigravity provider routes. Existing stored credentials are preserved; users with a saved model from a removed provider must select another model.
+- Removed the Capy agent setup manifest and the `~/.capy/work` scratch paths used by browser tests.
 
 ## [1.0.0] - 2026-03-15
 

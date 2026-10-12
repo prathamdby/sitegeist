@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -12,9 +13,17 @@ import * as XLSX from "xlsx";
 import { documentFixtures } from "./attachments-ui-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const work = join(process.env.HOME, ".capy/work/artifacts-ui");
 const renders = process.env.ARTIFACT_RENDER_DIRECTORY;
-const measurementsPath = process.env.ARTIFACT_MEASUREMENTS_PATH || join(work, "artifact-measurements.json");
+let work;
+let measurementsPath;
+let ownedMeasurements;
+
+function ownedDirectory(prefix) {
+	const directory = mkdtempSync(join(tmpdir(), prefix));
+	if (lstatSync(directory).isSymbolicLink()) throw new Error(`scratch directory is a symlink: ${directory}`);
+	chmodSync(directory, 0o700);
+	return directory;
+}
 let browser;
 let server;
 let origin;
@@ -22,7 +31,13 @@ const measurements = [];
 const recorded = JSON.parse(readFileSync(join(root, "tests/fixtures/contracts/artifacts-ui.json"), "utf8"));
 
 before(async () => {
-	mkdirSync(work, { recursive: true });
+	work = ownedDirectory("sitegeist-artifacts-ui-");
+	if (process.env.ARTIFACT_MEASUREMENTS_PATH) measurementsPath = process.env.ARTIFACT_MEASUREMENTS_PATH;
+	else if (renders) measurementsPath = join(renders, "artifact-measurements.json");
+	else {
+		ownedMeasurements = ownedDirectory("sitegeist-artifact-measurements-");
+		measurementsPath = join(ownedMeasurements, "artifact-measurements.json");
+	}
 	if (renders) mkdirSync(renders, { recursive: true });
 	mkdirSync(dirname(measurementsPath), { recursive: true });
 	execFileSync(`${root}node_modules/.bin/tailwindcss`, ["-i", `${root}src/app.css`, "-o", join(work, "app.css")]);
@@ -71,9 +86,20 @@ before(async () => {
 });
 
 after(async () => {
-	writeFileSync(measurementsPath, JSON.stringify(measurements, null, 2));
-	await browser?.close();
-	await new Promise((resolve) => server?.close(resolve));
+	try {
+		try {
+			if (measurementsPath) writeFileSync(measurementsPath, JSON.stringify(measurements, null, 2));
+		} finally {
+			try {
+				await browser?.close();
+			} finally {
+				await new Promise((resolve) => server?.close(resolve) ?? resolve());
+			}
+		}
+	} finally {
+		if (work) rmSync(work, { recursive: true, force: true });
+		if (ownedMeasurements) rmSync(ownedMeasurements, { recursive: true, force: true });
+	}
 });
 
 async function pageFor(width = 600) {
