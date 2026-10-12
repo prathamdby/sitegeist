@@ -2,6 +2,7 @@ import { html } from "lit";
 import { createRef, ref } from "lit/directives/ref.js";
 import { Bug } from "lucide";
 import { type Static, Type } from "typebox";
+import { isTabScopeEnabled, resolveActingTab } from "../browser/session-tabs.js";
 import {
 	registerToolRenderer,
 	renderCollapsibleHeader,
@@ -73,11 +74,18 @@ CRITICAL: Use browserjs() and repl tool for DOM manipulation. Use this ONLY for 
 			throw new Error("Debugger command aborted");
 		}
 
-		// Get active tab
-		const [tab] = await chrome.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
+		// Get the tab to act on: the session's acting tab when tab scope is
+		// on, otherwise the legacy active tab.
+		let tab: chrome.tabs.Tab | undefined;
+		if (await isTabScopeEnabled()) {
+			tab = await resolveActingTab().catch(() => undefined);
+		}
+		if (!tab) {
+			[tab] = await chrome.tabs.query({
+				active: true,
+				currentWindow: true,
+			});
+		}
 
 		if (!tab || !tab.id) {
 			throw new Error("No active tab found");

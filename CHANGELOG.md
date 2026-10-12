@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Introduced a flag-gated tab-scope kernel (off by default) with group-scoped tab filtering, inactive tab creation and foreign-tab rejection groundwork for background tab groups.
+- Added background tab groups: each chat can own its own tab group with a pinned panel tab (Settings → Tabs → Background tabs, off by default). New tabs open inactive in-group, list/switch are group-scoped, page tools act on the session's acting tab, and background screenshots go through the debugger protocol so foreign pixels never leak. See docs/tab-groups.md.
+- Sessions bound to one tab cannot be taken by another tab's panel, and the header pop-out button opens a fresh panel on a new tab so two sessions run side by side. Switching sessions releases the scope for adoption elsewhere.
+- One tab group per session: the group assignment persists across switches and a new group is created only when the recorded group is gone.
+- Rate-limit retries: provider 429s retry up to 3 times with a fixed delay (Settings → Retry, off with 0). Quota-exhaustion and non-429 errors surface immediately.
+- Clicking a tab in a session group reveals that session's panel, or adopts the session when its panel is gone. Agent-driven tab switches never trigger this; streaming panels stay put silently.
+
 ### Changed
 
 - Migrated the agent runtime and model/auth registry to `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` 1.1.0, retaining the existing UI and stored data formats.

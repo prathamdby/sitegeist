@@ -81,6 +81,7 @@ declare module "@mariozechner/mini-lit" {
 		"Waiting...": string;
 		Current: string;
 		Locked: string;
+		"Tab group": string;
 		"Export failed. Check console for details.": string;
 		"Invalid import file format": string;
 		"Found {count} duplicate sessions. Click OK to overwrite, Cancel to skip duplicates.": string;
@@ -157,6 +158,7 @@ const sitegeistTranslations = {
 		"Waiting...": "Waiting...",
 		Current: "Current",
 		Locked: "Locked",
+		"Tab group": "Tab group",
 		"Export failed. Check console for details.": "Export failed. Check console for details.",
 		"Invalid import file format": "Invalid import file format",
 		"Found {count} duplicate sessions. Click OK to overwrite, Cancel to skip duplicates.":
@@ -234,6 +236,7 @@ const sitegeistTranslations = {
 		"Waiting...": "Warte...",
 		Current: "Aktuell",
 		Locked: "Gesperrt",
+		"Tab group": "Tab-Gruppe",
 		"Export failed. Check console for details.": "Export fehlgeschlagen. Prüfen Sie die Konsole für Details.",
 		"Invalid import file format": "Ungültiges Import-Dateiformat",
 		"Found {count} duplicate sessions. Click OK to overwrite, Cancel to skip duplicates.":

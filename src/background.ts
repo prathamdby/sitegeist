@@ -1,5 +1,17 @@
+import {
+	attachPanelToTab,
+	forgetPanelForTab,
+	GROUP_PANEL_KEY_PREFIX,
+	sessionForGroup,
+} from "./browser/session-panels.js";
+import { TAB_GROUPS_KEY, TAB_SCOPE_FLAG_KEY } from "./browser/session-tabs.js";
 import { relayOverlayAbortMessage } from "./tools/repl/overlay-abort.js";
-import type { LockedSessionsMessage, LockResultMessage, SidepanelToBackgroundMessage } from "./utils/port.js";
+import type {
+	LockedSessionsMessage,
+	LockResultMessage,
+	SidepanelToBackgroundMessage,
+	TabScopeRecord,
+} from "./utils/port.js";
 
 // Called when Sitegeist icon is clicked - opens sidepanel for current tab
 chrome.action.onClicked.addListener((tab: chrome.tabs.Tab) => {
@@ -31,6 +43,7 @@ if (chrome.runtime.onUserScriptMessage) {
 // Storage keys for tracking state (persists across service worker sleep)
 const SIDEPANEL_OPEN_KEY = "sidepanel_open_windows";
 const SESSION_LOCKS_KEY = "session_locks"; // sessionId -> windowId mapping
+const TAB_SCOPES_KEY = "tab_scopes"; // sessionId -> TabScopeRecord (M2/M4)
 
 // Synchronously readable cache of which sidepanels are open
 // Gets populated on startup and updated by port events
@@ -44,25 +57,87 @@ chrome.storage.session.get(SIDEPANEL_OPEN_KEY, (data) => {
 
 // Handle port connections from sidepanels
 chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
-	// Port name format: "sidepanel:${windowId}"
-	const match = /^sidepanel:(\d+)$/.exec(port.name);
-	if (!match) return;
+	// Port name formats (dual-accept through the tab-scope cutover):
+	//   legacy: "sidepanel:${windowId}"
+	//   tab-bound: "sidepanel:tab:${tabId}:${sessionId|-}"
+	const legacyMatch = /^sidepanel:(\d+)$/.exec(port.name);
+	const tabMatch = /^sidepanel:tab:(\d+):(.*)$/.exec(port.name);
+	if (!legacyMatch && !tabMatch) return;
 
-	const windowId = Number(match[1]);
+	const windowId = legacyMatch ? Number(legacyMatch[1]) : undefined;
+	const tabBoundPort = tabMatch
+		? { tabId: Number(tabMatch[1]), sessionId: tabMatch[2] === "-" ? undefined : tabMatch[2] }
+		: undefined;
 
-	// Update cache synchronously
-	openSidepanels.add(windowId);
+	// Legacy cache bookkeeping only applies to window-bound ports. Tab-bound
+	// ports resolve their window from the tab at message time.
+	if (windowId !== undefined) {
+		openSidepanels.add(windowId);
+	}
 
 	// Mark sidepanel as open in persistent storage (survives service worker sleep)
 	chrome.storage.session.get(SIDEPANEL_OPEN_KEY, (data) => {
 		const openWindows = new Set<number>((data[SIDEPANEL_OPEN_KEY] as number[]) || []);
-		openWindows.add(windowId);
-		chrome.storage.session.set({ [SIDEPANEL_OPEN_KEY]: Array.from(openWindows) });
+		if (windowId !== undefined) {
+			openWindows.add(windowId);
+			chrome.storage.session.set({ [SIDEPANEL_OPEN_KEY]: Array.from(openWindows) });
+		} else if (tabBoundPort) {
+			// Resolve the tab's window so toggle/lock heuristics keep working.
+			chrome.tabs.get(tabBoundPort.tabId).then(
+				(tab) => {
+					if (tab.windowId !== undefined) {
+						openWindows.add(tab.windowId);
+						chrome.storage.session.set({ [SIDEPANEL_OPEN_KEY]: Array.from(openWindows) });
+					}
+				},
+				() => {},
+			);
+		}
 	});
 
 	port.onMessage.addListener((msg: SidepanelToBackgroundMessage) => {
 		if (msg.type === "acquireLock") {
 			const { sessionId, windowId: reqWindowId } = msg;
+
+			// Tab-bound panels own sessions per tab: a session bound to one
+			// tab cannot be taken by another tab's panel, even in the same
+			// window. This is what keeps two tabs' sessions independent.
+			// Legacy window-bound panels keep the original window logic.
+			if (tabBoundPort) {
+				void (async () => {
+					const data = await chrome.storage.session.get(TAB_SCOPES_KEY);
+					const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
+						string,
+						TabScopeRecord
+					>;
+					const record = scopes[sessionId];
+					if (record && record.boundTabId !== tabBoundPort.tabId) {
+						// A dead owner must not brick the session: verify the
+						// recorded bound tab still exists before denying.
+						const ownerAlive = await chrome.tabs
+							.get(record.boundTabId)
+							.then(() => true)
+							.catch(() => false);
+						if (ownerAlive) {
+							const denied: LockResultMessage = { type: "lockResult", sessionId, success: false };
+							port.postMessage(denied);
+							return;
+						}
+						delete scopes[sessionId];
+						await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
+					}
+					const lockData = await chrome.storage.session.get(SESSION_LOCKS_KEY);
+					const sessionLocks = ((lockData[SESSION_LOCKS_KEY] as Record<string, number>) || {}) as Record<
+						string,
+						number
+					>;
+					sessionLocks[sessionId] = reqWindowId;
+					await chrome.storage.session.set({ [SESSION_LOCKS_KEY]: sessionLocks });
+					const granted: LockResultMessage = { type: "lockResult", sessionId, success: true };
+					port.postMessage(granted);
+				})();
+				return;
+			}
 
 			// Read current locks from persistent storage
 			chrome.storage.session.get(SESSION_LOCKS_KEY, (data) => {
@@ -104,17 +179,331 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 				};
 				port.postMessage(response);
 			});
+		} else if (msg.type === "acquireTabScope") {
+			const { sessionId, tabId, windowId: reqWindowId, groupId: reqGroupId, actingTabId: reqActingTabId } = msg;
+			void (async () => {
+				// Verify the bound tab still exists before granting.
+				let tab: chrome.tabs.Tab;
+				try {
+					tab = await chrome.tabs.get(tabId);
+				} catch {
+					port.postMessage({ type: "tabScopeAcquired", sessionId, success: false, tabIds: [] });
+					return;
+				}
+				const data = await chrome.storage.session.get(TAB_SCOPES_KEY);
+				const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
+					string,
+					TabScopeRecord
+				>;
+				const existing = scopes[sessionId];
+				// Verify a requested group still exists; otherwise drop it and
+				// fall back to the previously recorded group when still valid.
+				let groupId = reqGroupId ?? existing?.groupId;
+				if (groupId !== undefined) {
+					try {
+						await chrome.tabGroups.get(groupId);
+					} catch {
+						groupId = undefined;
+					}
+				}
+				scopes[sessionId] = {
+					sessionId,
+					boundTabId: tabId,
+					actingTabId: reqActingTabId ?? existing?.actingTabId ?? tabId,
+					windowId: tab.windowId ?? reqWindowId,
+					...(groupId !== undefined ? { groupId } : {}),
+				};
+				await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
+				let tabIds = [tabId];
+				if (groupId !== undefined) {
+					try {
+						const grouped = await chrome.tabs.query({ groupId });
+						const ids = grouped.map((t) => t.id).filter((id): id is number => id !== undefined);
+						if (ids.length > 0) tabIds = ids;
+					} catch {
+						// Fall through with the bound tab only.
+					}
+				}
+				port.postMessage({ type: "tabScopeAcquired", sessionId, success: true, groupId, tabIds });
+				// Best-effort: pin the panel to the owning tab. Never throws.
+				void setPanelForTab(tabId, true);
+			})();
+		} else if (msg.type === "updateActingTab") {
+			const { sessionId, tabId } = msg;
+			void (async () => {
+				try {
+					await chrome.tabs.get(tabId);
+				} catch {
+					port.postMessage({ type: "actingTabUpdated", sessionId, success: false });
+					return;
+				}
+				const data = await chrome.storage.session.get(TAB_SCOPES_KEY);
+				const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
+					string,
+					TabScopeRecord
+				>;
+				const existing = scopes[sessionId];
+				if (!existing) {
+					port.postMessage({ type: "actingTabUpdated", sessionId, success: false });
+					return;
+				}
+				existing.actingTabId = tabId;
+				await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
+				port.postMessage({ type: "actingTabUpdated", sessionId, success: true });
+			})();
+		} else if (msg.type === "releaseTabScope") {
+			const { sessionId } = msg;
+			void (async () => {
+				const data = await chrome.storage.session.get(TAB_SCOPES_KEY);
+				const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
+					string,
+					TabScopeRecord
+				>;
+				delete scopes[sessionId];
+				await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
+				port.postMessage({ type: "tabScopeReleased", sessionId });
+			})();
+		} else if (msg.type === "getTabScopes") {
+			chrome.storage.session.get(TAB_SCOPES_KEY, (data) => {
+				const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
+					string,
+					TabScopeRecord
+				>;
+				port.postMessage({ type: "tabScopes", scopes });
+			});
 		}
 	});
 
 	port.onDisconnect.addListener(() => {
-		closeSidepanel(windowId, false);
+		if (windowId !== undefined) {
+			closeSidepanel(windowId, false);
+			return;
+		}
+		// Tab-bound port: keep the scope record so a reload re-adopts its
+		// group instead of orphaning it. Tab/window close cleans up via
+		// onRemoved handlers; dead owners are verified at acquire time.
 	});
 });
 
 // Clean up locks when entire window closes (belt-and-suspenders)
 chrome.windows.onRemoved.addListener((windowId: number) => {
 	closeSidepanel(windowId, false);
+	void releaseScopesForWindow(windowId);
+});
+
+// ============================================================================
+// TAB-SCOPE LIFECYCLE (M4)
+// ============================================================================
+
+async function readScopes(): Promise<Record<string, TabScopeRecord>> {
+	const data = await chrome.storage.session.get(TAB_SCOPES_KEY);
+	return ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<string, TabScopeRecord>;
+}
+
+async function releaseScopesForWindow(windowId: number): Promise<void> {
+	const scopes = await readScopes();
+	let changed = false;
+	for (const sessionId of Object.keys(scopes)) {
+		if (scopes[sessionId].windowId === windowId) {
+			delete scopes[sessionId];
+			changed = true;
+		}
+	}
+	if (changed) {
+		await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
+	}
+}
+
+/** Best-effort per-tab panel enable/disable. Never throws; flag-gated callers only. */
+export async function setPanelForTab(tabId: number, enabled: boolean, path?: string): Promise<void> {
+	try {
+		const api = chrome.sidePanel as unknown as {
+			setOptions?: (options: { tabId: number; enabled: boolean; path?: string }) => Promise<void>;
+		};
+		if (typeof api.setOptions !== "function") return;
+		if (path !== undefined) {
+			await api.setOptions({ tabId, enabled, path });
+		} else {
+			await api.setOptions({ tabId, enabled });
+		}
+	} catch (err) {
+		console.warn("[Background] setPanelForTab failed:", err);
+	}
+}
+
+// ============================================================================
+// GROUP PANELS
+// ============================================================================
+// Every tab in a session's group gets a tab-specific panel for that session,
+// registered before the user can activate it: sidePanel.open() needs a user
+// gesture, but Chrome shows an already registered tab panel on activation.
+
+async function isTabScopeOn(): Promise<boolean> {
+	try {
+		const stored = await chrome.storage.local.get(TAB_SCOPE_FLAG_KEY);
+		return stored[TAB_SCOPE_FLAG_KEY] === true;
+	} catch {
+		return false;
+	}
+}
+
+async function readGroupAssignments(): Promise<Record<string, { groupId: number }>> {
+	try {
+		const data = await chrome.storage.session.get(TAB_GROUPS_KEY);
+		return ((data[TAB_GROUPS_KEY] as Record<string, { groupId: number }>) || {}) as Record<
+			string,
+			{ groupId: number }
+		>;
+	} catch {
+		return {};
+	}
+}
+
+async function attachAllGroupPanels(): Promise<void> {
+	if (!(await isTabScopeOn())) return;
+	const assignments = await readGroupAssignments();
+	for (const [sessionId, assignment] of Object.entries(assignments)) {
+		let tabs: chrome.tabs.Tab[];
+		try {
+			tabs = await chrome.tabs.query({ groupId: assignment.groupId });
+		} catch {
+			continue;
+		}
+		for (const tab of tabs) {
+			if (tab.id !== undefined) await attachPanelToTab(tab.id, sessionId);
+		}
+	}
+}
+
+async function attachGroupPanelForTab(tabId: number, groupId: number | undefined): Promise<void> {
+	if (!(await isTabScopeOn())) return;
+	const sessionId = sessionForGroup(await readGroupAssignments(), groupId);
+	if (sessionId !== undefined) await attachPanelToTab(tabId, sessionId);
+}
+
+/** Flag turned off: return registered group tabs to the default panel. */
+async function detachAllGroupPanels(): Promise<void> {
+	try {
+		const all = await chrome.storage.session.get(null);
+		for (const key of Object.keys(all)) {
+			if (!key.startsWith(GROUP_PANEL_KEY_PREFIX)) continue;
+			const tabId = Number(key.slice(GROUP_PANEL_KEY_PREFIX.length));
+			if (Number.isInteger(tabId)) {
+				await setPanelForTab(tabId, true, `sidepanel.html?tabId=${tabId}`);
+			}
+			await chrome.storage.session.remove(key);
+		}
+	} catch (err) {
+		console.warn("[Background] Failed to detach group panels:", err);
+	}
+}
+
+// Tabs join groups by agent creation, Chrome's open-in-group behavior, or
+// the user dragging them in; all of them surface as a groupId change.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+	if (changeInfo.groupId !== undefined) void attachGroupPanelForTab(tabId, changeInfo.groupId);
+});
+
+chrome.tabs.onCreated.addListener((tab) => {
+	if (tab.id !== undefined && tab.groupId !== undefined && tab.groupId !== -1) {
+		void attachGroupPanelForTab(tab.id, tab.groupId);
+	}
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+	if (areaName === "session" && changes[TAB_GROUPS_KEY]) void attachAllGroupPanels();
+	if (areaName === "local" && changes[TAB_SCOPE_FLAG_KEY]) {
+		if (changes[TAB_SCOPE_FLAG_KEY].newValue === true) void attachAllGroupPanels();
+		else void detachAllGroupPanels();
+	}
+});
+
+// Service worker start: registrations are browser state, but a missed event
+// while the worker slept would leave a group tab without its panel.
+void attachAllGroupPanels();
+
+// Bound tab closed: drop the scope (a panel bound to a dead tab is gone).
+// Acting tab closed: fall back to the bound tab.
+chrome.tabs.onRemoved.addListener((tabId: number) => {
+	void forgetPanelForTab(tabId);
+	void (async () => {
+		const scopes = await readScopes();
+		let changed = false;
+		for (const sessionId of Object.keys(scopes)) {
+			const scope = scopes[sessionId];
+			if (scope.boundTabId === tabId) {
+				delete scopes[sessionId];
+				changed = true;
+			} else if (scope.actingTabId === tabId) {
+				scope.actingTabId = scope.boundTabId;
+				changed = true;
+			}
+		}
+		if (changed) {
+			await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
+		}
+	})();
+});
+
+// Group deleted by the user: keep the binding, clear the group id so the
+// next ensure recreates it instead of pointing at a dead group. The
+// persistent per-session assignment is cleared too: a new group is created
+// only when the recorded group is actually gone.
+chrome.tabGroups?.onRemoved?.addListener?.((group) => {
+	void (async () => {
+		const scopes = await readScopes();
+		let changed = false;
+		for (const sessionId of Object.keys(scopes)) {
+			if (scopes[sessionId].groupId === group.id) {
+				delete scopes[sessionId].groupId;
+				changed = true;
+			}
+		}
+		if (changed) {
+			await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
+		}
+		try {
+			const data = await chrome.storage.session.get(TAB_GROUPS_KEY);
+			const assignments = ((data[TAB_GROUPS_KEY] as Record<string, { groupId: number }>) || {}) as Record<
+				string,
+				{ groupId: number }
+			>;
+			let assignmentsChanged = false;
+			for (const sessionId of Object.keys(assignments)) {
+				if (assignments[sessionId]?.groupId === group.id) {
+					delete assignments[sessionId];
+					assignmentsChanged = true;
+				}
+			}
+			if (assignmentsChanged) {
+				await chrome.storage.session.set({ [TAB_GROUPS_KEY]: assignments });
+			}
+		} catch {
+			// Assignment cleanup is best effort.
+		}
+	})();
+});
+
+// Tab replaced (e.g. crash restore): remap bound/acting ids.
+chrome.webNavigation.onTabReplaced.addListener((details) => {
+	void (async () => {
+		const scopes = await readScopes();
+		let changed = false;
+		for (const sessionId of Object.keys(scopes)) {
+			const scope = scopes[sessionId];
+			if (scope.boundTabId === details.tabId) {
+				scope.boundTabId = details.replacedTabId;
+				changed = true;
+			}
+			if (scope.actingTabId === details.tabId) {
+				scope.actingTabId = details.replacedTabId;
+				changed = true;
+			}
+		}
+		if (changed) {
+			await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
+		}
+	});
 });
 
 // Handle keyboard shortcut - toggle sidepanel open/close

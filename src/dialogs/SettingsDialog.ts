@@ -5,7 +5,9 @@ import { Label } from "@mariozechner/mini-lit/dist/Label.js";
 import { Switch } from "@mariozechner/mini-lit/dist/Switch.js";
 import { html, LitElement } from "lit";
 import { property, state } from "lit/decorators.js";
+import { FOCUS_SESSION_TAB_KEY } from "../browser/session-panels.js";
 import { getProviders } from "../pi/models.js";
+import { clampRetryPolicy, DEFAULT_RETRY_POLICY } from "../pi/retry-policy.js";
 import { getAppStorage } from "../storage/app-storage.js";
 import "../components/ProviderKeyInput.js";
 
@@ -75,6 +77,141 @@ export class ProxyTab extends SettingsTab {
 	}
 }
 
+export class TabsTab extends SettingsTab {
+	@state() private tabScopeEnabled = false;
+	@state() private focusSessionTab = true;
+
+	getTabName() {
+		return "Tabs";
+	}
+
+	override async connectedCallback() {
+		super.connectedCallback();
+		const settings = getAppStorage().settings;
+		this.tabScopeEnabled = (await settings.get<boolean>("tabScope.enabled")) ?? false;
+		this.focusSessionTab = (await settings.get<boolean>(FOCUS_SESSION_TAB_KEY)) ?? true;
+	}
+
+	private async saveTabsSettings() {
+		const settings = getAppStorage().settings;
+		await settings.set("tabScope.enabled", this.tabScopeEnabled);
+		await settings.set(FOCUS_SESSION_TAB_KEY, this.focusSessionTab);
+		try {
+			await chrome.storage.local.set({
+				"tabScope.enabled": this.tabScopeEnabled,
+				[FOCUS_SESSION_TAB_KEY]: this.focusSessionTab,
+			});
+		} catch {
+			// Extension context required; settings record is the source of truth.
+		}
+	}
+
+	render() {
+		return html`<div class="flex flex-col gap-4">
+			<p class="text-sm text-muted-foreground">Each chat owns its own tab group. Tabs open in the background, the agent works on its current tab, and the panel stays on the tab you opened it on.</p>
+			<div class="flex items-center justify-between">
+				<span class="text-sm font-medium text-foreground">Background tabs</span>
+				${Switch({
+					checked: this.tabScopeEnabled,
+					onChange: (checked) => {
+						this.tabScopeEnabled = checked;
+						void this.saveTabsSettings();
+					},
+				})}
+			</div>
+			<p class="text-xs text-muted-foreground">Takes effect for new sessions. Existing sessions adopt a group when reopened. Switching to a tab in a chat's group shows that chat in the panel.</p>
+			<div class="flex items-center justify-between">
+				<span class="text-sm font-medium text-foreground">Switch to new chat's tab</span>
+				${Switch({
+					checked: this.focusSessionTab,
+					disabled: !this.tabScopeEnabled,
+					onChange: (checked) => {
+						this.focusSessionTab = checked;
+						void this.saveTabsSettings();
+					},
+				})}
+			</div>
+			<p class="text-xs text-muted-foreground">When a new chat starts, focus the tab it works in so you can watch it. Off keeps you on your current tab.</p>
+		</div>`;
+	}
+}
+
+export class RetryTab extends SettingsTab {
+	@state() private maxRetries = DEFAULT_RETRY_POLICY.maxRetries;
+	@state() private delayMs = DEFAULT_RETRY_POLICY.delayMs;
+
+	getTabName() {
+		return "Retry";
+	}
+
+	override async connectedCallback() {
+		super.connectedCallback();
+		const settings = getAppStorage().settings;
+		const stored = clampRetryPolicy({
+			maxRetries: (await settings.get<number>("retry.rateLimit.maxRetries")) ?? DEFAULT_RETRY_POLICY.maxRetries,
+			delayMs: (await settings.get<number>("retry.rateLimit.delayMs")) ?? DEFAULT_RETRY_POLICY.delayMs,
+		});
+		this.maxRetries = stored.maxRetries;
+		this.delayMs = stored.delayMs;
+	}
+
+	private async saveRetrySettings() {
+		const settings = getAppStorage().settings;
+		await settings.set("retry.rateLimit.maxRetries", this.maxRetries);
+		await settings.set("retry.rateLimit.delayMs", this.delayMs);
+		try {
+			await chrome.storage.local.set({
+				"retry.rateLimit.maxRetries": this.maxRetries,
+				"retry.rateLimit.delayMs": this.delayMs,
+			});
+		} catch {
+			// Extension context required; settings record is the source of truth.
+		}
+	}
+
+	render() {
+		return html`<div class="flex flex-col gap-4">
+			<p class="text-sm text-muted-foreground">Retries rate-limited requests (HTTP 429) with a fixed delay. Quota and billing limits are never retried.</p>
+			<div class="space-y-2">
+				${Label("Max retries")}
+				${Input({
+					type: "number",
+					min: 0,
+					max: 10,
+					step: 1,
+					value: String(this.maxRetries),
+					onChange: (event) => {
+						this.maxRetries = clampRetryPolicy({
+							maxRetries: Number((event.target as HTMLInputElement).value),
+							delayMs: this.delayMs,
+						}).maxRetries;
+						void this.saveRetrySettings();
+					},
+				})}
+				<p class="text-xs text-muted-foreground">Retries after the initial request. 0 disables retries.</p>
+			</div>
+			<div class="space-y-2">
+				${Label("Retry delay (ms)")}
+				${Input({
+					type: "number",
+					min: 0,
+					max: 30000,
+					step: 100,
+					value: String(this.delayMs),
+					onChange: (event) => {
+						this.delayMs = clampRetryPolicy({
+							maxRetries: this.maxRetries,
+							delayMs: Number((event.target as HTMLInputElement).value),
+						}).delayMs;
+						void this.saveRetrySettings();
+					},
+				})}
+				<p class="text-xs text-muted-foreground">Fixed wait between rate-limit retries. Server Retry-After hints are ignored.</p>
+			</div>
+		</div>`;
+	}
+}
+
 export class SettingsDialog extends DialogBase {
 	@property({ attribute: false }) tabs: SettingsTab[] = [];
 	@state() private activeTabIndex = 0;
@@ -130,5 +267,7 @@ export class SettingsDialog extends DialogBase {
 }
 
 customElements.define("sitegeist-proxy-tab", ProxyTab);
+customElements.define("sitegeist-tabs-tab", TabsTab);
+customElements.define("sitegeist-retry-tab", RetryTab);
 customElements.define("sitegeist-api-keys-tab", ApiKeysTab);
 customElements.define("sitegeist-settings-dialog", SettingsDialog);

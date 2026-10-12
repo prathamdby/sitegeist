@@ -1,3 +1,4 @@
+import { isTabScopeEnabled, resolveActingTab } from "../../browser/session-tabs.js";
 import { createOverlayAbortRequest, removeOverlayAbortRequest } from "./overlay-abort.js";
 import { createOverlayScript, removeOverlayScript } from "./overlay-content.js";
 
@@ -112,6 +113,23 @@ export async function injectOverlayForActiveTab(taskName: string): Promise<{ tab
 	const tabId = await getActiveTabId();
 	const requestId = await injectOverlay(tabId, taskName);
 	return { tabId, requestId };
+}
+
+/**
+ * Inject overlay for the agent's acting tab. When tab scope is on this is
+ * the session's acting tab inside its group (never a foreign tab);
+ * otherwise it falls back to the active tab.
+ */
+export async function injectOverlayForScope(taskName: string): Promise<{ tabId: number; requestId?: string }> {
+	if (await isTabScopeEnabled()) {
+		const tab = await resolveActingTab();
+		if (tab.id === undefined) {
+			throw new Error("No acting tab found");
+		}
+		const requestId = await injectOverlay(tab.id, taskName);
+		return { tabId: tab.id, requestId };
+	}
+	return injectOverlayForActiveTab(taskName);
 }
 
 /**

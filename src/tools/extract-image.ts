@@ -1,6 +1,7 @@
 import { html } from "lit";
 import { Image as ImageIcon } from "lucide";
 import { type Static, Type } from "typebox";
+import { isTabScopeEnabled, resolveActingTab } from "../browser/session-tabs.js";
 import {
 	registerToolRenderer,
 	renderHeader,
@@ -148,6 +149,33 @@ async function captureScreenshot(maxWidth: number, windowId: number): Promise<Im
 	return fetchAndResizeImage(dataUrl, maxWidth);
 }
 
+/**
+ * Capture an inactive owned tab via the debugger protocol. Attaches,
+ * captures a screenshot, and always detaches. Used only when tab scope is
+ * on and the acting tab is not the visible tab of its window, so the agent
+ * never receives pixels from a foreign tab.
+ */
+async function captureInactiveTabViaDebugger(tabId: number, maxWidth: number): Promise<ImageContent> {
+	try {
+		await chrome.debugger.attach({ tabId }, "1.3");
+	} catch (err) {
+		if (!(err instanceof Error) || !err.message?.includes("already attached")) {
+			throw err;
+		}
+	}
+	try {
+		const result = (await chrome.debugger.sendCommand({ tabId }, "Page.captureScreenshot", {
+			format: "png",
+		})) as { data?: string };
+		if (!result?.data) {
+			throw new Error("Debugger capture returned no image data");
+		}
+		return fetchAndResizeImage(`data:image/png;base64,${result.data}`, maxWidth);
+	} finally {
+		await chrome.debugger.detach({ tabId }).catch(() => {});
+	}
+}
+
 export class ExtractImageTool implements AgentTool<typeof extractImageSchema, ExtractImageDetails> {
 	name = "extract_image";
 	label = "Extract Image";
@@ -166,12 +194,34 @@ export class ExtractImageTool implements AgentTool<typeof extractImageSchema, Ex
 
 		if (args.mode === "screenshot") {
 			if (!this.windowId) throw new Error("windowId not set on ExtractImageTool");
-			const image = await captureScreenshot(maxWidth, this.windowId);
-			content.push(image);
+			if (await isTabScopeEnabled()) {
+				// Act on the session's acting tab. Never capture a foreign
+				// visible tab: capture the acting tab directly, via debugger
+				// when it is not the visible tab of its window.
+				const acting = await resolveActingTab();
+				if (acting.id === undefined) throw new Error("No acting tab");
+				const [visible] = await chrome.tabs.query({ active: true, windowId: acting.windowId });
+				if (visible?.id === acting.id) {
+					const image = await captureScreenshot(maxWidth, acting.windowId);
+					content.push(image);
+				} else {
+					const image = await captureInactiveTabViaDebugger(acting.id, maxWidth);
+					content.push(image);
+				}
+			} else {
+				const image = await captureScreenshot(maxWidth, this.windowId);
+				content.push(image);
+			}
 			content.push({ type: "text", text: `Screenshot captured (max ${maxWidth}px width)` });
 		} else if (args.mode === "selector") {
 			if (!args.selector) throw new Error("selector is required for 'selector' mode");
-			const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+			let tab: chrome.tabs.Tab | undefined;
+			if (await isTabScopeEnabled()) {
+				tab = await resolveActingTab().catch(() => undefined);
+			}
+			if (!tab) {
+				[tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+			}
 			if (!tab?.id) throw new Error("No active tab");
 
 			const info = await getImageInfoFromPage(tab.id, args.selector);

@@ -276,9 +276,9 @@ Navigate to URLs and manage tabs.
 
 ## Actions
 - { url: "https://example.com" } - Navigate to URL in current tab
-- { url: "https://example.com", newTab: true } - Open URL in new tab
-- { listTabs: true } - List all open tabs with IDs, URLs, and titles
-- { switchToTab: <tabId> } - Switch to a specific tab by its ID
+- { url: "https://example.com", newTab: true } - Open URL in a new background tab
+- { listTabs: true } - List tabs visible to this session with IDs, URLs, and titles
+- { switchToTab: <tabId> } - Switch to a specific tab by its ID (session tabs only)
 
 ## Returns
 Final URL, page title, tab ID, and available skills.
