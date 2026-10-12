@@ -318,6 +318,14 @@ const updateUrl = (sessionId: string) => {
 	window.history.replaceState({}, "", url);
 };
 
+const clearSessionUrl = () => {
+	const url = new URL(window.location.href);
+	url.searchParams.delete("new");
+	url.searchParams.delete("session");
+	if (currentHostTabId !== undefined) url.searchParams.set("hostTab", String(currentHostTabId));
+	window.history.replaceState({}, "", url);
+};
+
 const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true) => {
 	agent?.abort();
 	if (agentUnsubscribe) {
@@ -968,6 +976,7 @@ async function initApp() {
 
 			if (!lockResponse.success) {
 				// Session is open on another tab. This tab starts its own task.
+				clearSessionUrl();
 				await createAgent();
 				if (agent) {
 					const welcomeMessage = createWelcomeMessage(tutorials);
