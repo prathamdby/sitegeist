@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmodSync, lstatSync, mkdtempSync } from "node:fs";
+import { chmodSync, lstatSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -450,8 +450,9 @@ test("unwired stores fail explicitly; quota and persistence forward browser capa
 	delete globalThis.navigator.storage;
 });
 
-test("browser bundle uses one application-owned storage singleton and the local sessions class", async () => {
+test("browser bundle uses one application-owned storage singleton and the local sessions class", async (t) => {
 	const outdir = mkdtempSync(join(tmpdir(), "sitegeist-storage-tests-"));
+	t.after(() => rmSync(outdir, { recursive: true, force: true }));
 	if (lstatSync(outdir).isSymbolicLink()) throw new Error(`scratch directory is a symlink: ${outdir}`);
 	chmodSync(outdir, 0o700);
 	await mkdir(join(outdir, "unrelated/storage"), { recursive: true });

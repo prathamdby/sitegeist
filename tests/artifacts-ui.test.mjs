@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,11 +13,10 @@ import * as XLSX from "xlsx";
 import { documentFixtures } from "./attachments-ui-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const work = mkdtempSync(join(tmpdir(), "sitegeist-artifacts-ui-"));
-if (lstatSync(work).isSymbolicLink()) throw new Error(`scratch directory is a symlink: ${work}`);
-chmodSync(work, 0o700);
 const renders = process.env.ARTIFACT_RENDER_DIRECTORY;
-const measurementsPath = process.env.ARTIFACT_MEASUREMENTS_PATH || join(work, "artifact-measurements.json");
+const measurementsPath =
+	process.env.ARTIFACT_MEASUREMENTS_PATH || join(tmpdir(), "sitegeist-artifact-measurements.json");
+let work;
 let browser;
 let server;
 let origin;
@@ -25,6 +24,9 @@ const measurements = [];
 const recorded = JSON.parse(readFileSync(join(root, "tests/fixtures/contracts/artifacts-ui.json"), "utf8"));
 
 before(async () => {
+	work = mkdtempSync(join(tmpdir(), "sitegeist-artifacts-ui-"));
+	if (lstatSync(work).isSymbolicLink()) throw new Error(`scratch directory is a symlink: ${work}`);
+	chmodSync(work, 0o700);
 	if (renders) mkdirSync(renders, { recursive: true });
 	mkdirSync(dirname(measurementsPath), { recursive: true });
 	execFileSync(`${root}node_modules/.bin/tailwindcss`, ["-i", `${root}src/app.css`, "-o", join(work, "app.css")]);
@@ -76,6 +78,7 @@ after(async () => {
 	writeFileSync(measurementsPath, JSON.stringify(measurements, null, 2));
 	await browser?.close();
 	await new Promise((resolve) => server?.close(resolve));
+	if (work) rmSync(work, { recursive: true, force: true });
 });
 
 async function pageFor(width = 600) {
