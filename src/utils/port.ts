@@ -16,7 +16,7 @@
 export interface AcquireLockMessage {
 	type: "acquireLock";
 	sessionId: string;
-	windowId: number;
+	ownerTabId: number;
 }
 
 /**
@@ -27,7 +27,7 @@ export interface LockResultMessage {
 	type: "lockResult";
 	sessionId: string;
 	success: boolean;
-	ownerWindowId?: number; // Set if lock failed (session owned by another window)
+	ownerTabId?: number;
 }
 
 /**
@@ -44,7 +44,30 @@ export interface GetLockedSessionsMessage {
  */
 export interface LockedSessionsMessage {
 	type: "lockedSessions";
-	locks: Record<string, number>; // sessionId -> windowId
+	locks: Record<string, number>; // sessionId -> owner tab id
+}
+
+export interface GetBindingMessage {
+	type: "getBinding";
+	tabId: number;
+}
+
+export interface BindingResultMessage {
+	type: "bindingResult";
+	tabId: number;
+	ownerTabId?: number;
+	sessionId?: string | null;
+	role?: "host" | "work";
+}
+
+export interface ClearHostBindingMessage {
+	type: "clearHostBinding";
+	tabId: number;
+}
+
+export interface BindingClearedMessage {
+	type: "bindingCleared";
+	tabId: number;
 }
 
 // ============================================================================
@@ -57,7 +80,9 @@ export interface LockedSessionsMessage {
  */
 export type MessagePair =
 	| { request: AcquireLockMessage; response: LockResultMessage }
-	| { request: GetLockedSessionsMessage; response: LockedSessionsMessage };
+	| { request: GetLockedSessionsMessage; response: LockedSessionsMessage }
+	| { request: GetBindingMessage; response: BindingResultMessage }
+	| { request: ClearHostBindingMessage; response: BindingClearedMessage };
 
 /**
  * All messages that can be sent from sidepanel to background.
@@ -87,6 +112,8 @@ export const REQUEST_TO_RESPONSE_TYPE: Record<
 > = {
 	acquireLock: "lockResult",
 	getLockedSessions: "lockedSessions",
+	getBinding: "bindingResult",
+	clearHostBinding: "bindingCleared",
 };
 
 // ============================================================================
@@ -94,15 +121,15 @@ export const REQUEST_TO_RESPONSE_TYPE: Record<
 // ============================================================================
 
 let port: chrome.runtime.Port | null = null;
-let currentWindowId: number | undefined;
+let currentOwnerTabId: number | undefined;
 const responseHandlers = new Map<string, (msg: BackgroundToSidepanelMessage) => void>();
 
 /**
- * Initialize port system with window ID.
+ * Initialize port system with the task's owner tab id.
  * Must be called before sending any messages.
  */
-export function initialize(windowId: number): void {
-	currentWindowId = windowId;
+export function initialize(ownerTabId: number): void {
+	currentOwnerTabId = ownerTabId;
 	connect();
 }
 
@@ -111,12 +138,12 @@ export function initialize(windowId: number): void {
  * Background script will receive this connection via runtime.onConnect.
  */
 function connect(): chrome.runtime.Port {
-	if (!currentWindowId) {
-		throw new Error("[Port] Cannot connect: windowId not initialized");
+	if (!currentOwnerTabId) {
+		throw new Error("[Port] Cannot connect: owner tab id not initialized");
 	}
 
 	console.log(`[Port] Connecting... (${new Date().toISOString()})`);
-	const tmpPort = chrome.runtime.connect({ name: `sidepanel:${currentWindowId}` });
+	const tmpPort = chrome.runtime.connect({ name: `sidepanel:${currentOwnerTabId}` });
 
 	// Set up message listener to dispatch responses
 	tmpPort.onMessage.addListener((msg: BackgroundToSidepanelMessage) => {

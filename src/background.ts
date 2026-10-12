@@ -1,22 +1,32 @@
+import {
+	clearHostBinding,
+	decideLock,
+	type PanelBinding,
+	releaseLocksForOwner,
+	retargetBindings,
+	rewriteLockOwner,
+	sidePanelPath,
+} from "./panel/locks.js";
 import { relayOverlayAbortMessage } from "./tools/repl/overlay-abort.js";
-import type { LockedSessionsMessage, LockResultMessage, SidepanelToBackgroundMessage } from "./utils/port.js";
+import type {
+	BindingClearedMessage,
+	BindingResultMessage,
+	LockedSessionsMessage,
+	LockResultMessage,
+	SidepanelToBackgroundMessage,
+} from "./utils/port.js";
 
-// Called when Sitegeist icon is clicked - opens sidepanel for current tab
 chrome.action.onClicked.addListener((tab: chrome.tabs.Tab) => {
-	const tabId = tab?.id;
-	if (tabId && chrome.sidePanel.open) {
-		chrome.sidePanel.open({ tabId });
-	}
+	if (tab.id === undefined) return;
+	openPanelForTab(tab.id);
 });
 
-// Listen for messages from userScripts (overlay in page)
 console.log("[Background] onUserScriptMessage available:", !!chrome.runtime.onUserScriptMessage);
 if (chrome.runtime.onUserScriptMessage) {
 	chrome.runtime.onUserScriptMessage.addListener((message, sender, sendResponse) => {
 		console.log("[Background] Received userScript message type:", message?.type, "from tab:", sender.tab?.id);
 		const abortMessage = relayOverlayAbortMessage(message, sender);
 		if (abortMessage) {
-			// Forward to all open sidepanels (they'll check if they're streaming)
 			console.log("[Background] Relaying abort-repl to sidepanels");
 			void chrome.runtime.sendMessage(abortMessage).catch(() => {});
 			sendResponse({ success: true });
@@ -28,142 +38,228 @@ if (chrome.runtime.onUserScriptMessage) {
 	console.error("[Background] onUserScriptMessage NOT available!");
 }
 
-// Storage keys for tracking state (persists across service worker sleep)
-const SIDEPANEL_OPEN_KEY = "sidepanel_open_windows";
-const SESSION_LOCKS_KEY = "session_locks"; // sessionId -> windowId mapping
+const PANEL_MODEL_KEY = "panel_model";
+const SESSION_LOCKS_KEY = "session_locks";
+const OPEN_PANELS_KEY = "open_panel_tabs";
+const BINDINGS_KEY = "panel_bindings";
+const LEGACY_OPEN_KEY = "sidepanel_open_windows";
 
-// Synchronously readable cache of which sidepanels are open
-// Gets populated on startup and updated by port events
-let openSidepanels = new Set<number>();
+let openPanels = new Set<number>();
+let bindings: Record<string, PanelBinding> = {};
+let locks: Record<string, number> = {};
+const panelRefcounts = new Map<number, number>();
 
-// Initialize cache from storage on startup
-chrome.storage.session.get(SIDEPANEL_OPEN_KEY, (data) => {
-	openSidepanels = new Set<number>((data[SIDEPANEL_OPEN_KEY] as number[]) || []);
-	console.log("[Background] Initialized openSidepanels cache:", Array.from(openSidepanels));
-});
+let cacheReady: Promise<void> = Promise.resolve();
 
-// Handle port connections from sidepanels
-chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
-	// Port name format: "sidepanel:${windowId}"
-	const match = /^sidepanel:(\d+)$/.exec(port.name);
-	if (!match) return;
-
-	const windowId = Number(match[1]);
-
-	// Update cache synchronously
-	openSidepanels.add(windowId);
-
-	// Mark sidepanel as open in persistent storage (survives service worker sleep)
-	chrome.storage.session.get(SIDEPANEL_OPEN_KEY, (data) => {
-		const openWindows = new Set<number>((data[SIDEPANEL_OPEN_KEY] as number[]) || []);
-		openWindows.add(windowId);
-		chrome.storage.session.set({ [SIDEPANEL_OPEN_KEY]: Array.from(openWindows) });
-	});
-
-	port.onMessage.addListener((msg: SidepanelToBackgroundMessage) => {
-		if (msg.type === "acquireLock") {
-			const { sessionId, windowId: reqWindowId } = msg;
-
-			// Read current locks from persistent storage
-			chrome.storage.session.get(SESSION_LOCKS_KEY, (data) => {
-				const sessionLocks: Record<string, number> = (data[SESSION_LOCKS_KEY] as Record<string, number>) || {};
-				const ownerWindowId = sessionLocks[sessionId];
-				const ownerSidepanelOpen = ownerWindowId !== undefined && openSidepanels.has(ownerWindowId);
-
-				// Grant lock if: no owner, owner sidepanel closed, or requesting window is owner
-				const success = !ownerWindowId || !ownerSidepanelOpen || ownerWindowId === reqWindowId;
-
-				const response: LockResultMessage = success
-					? {
-							type: "lockResult",
-							sessionId,
-							success: true,
-						}
-					: {
-							type: "lockResult",
-							sessionId,
-							success: false,
-							ownerWindowId,
-						};
-
-				if (success) {
-					// Update locks in storage
-					sessionLocks[sessionId] = reqWindowId;
-					chrome.storage.session.set({ [SESSION_LOCKS_KEY]: sessionLocks });
-				}
-
-				port.postMessage(response);
-			});
-		} else if (msg.type === "getLockedSessions") {
-			// Read current locks from persistent storage
-			chrome.storage.session.get(SESSION_LOCKS_KEY, (data) => {
-				const locks: Record<string, number> = (data[SESSION_LOCKS_KEY] as Record<string, number>) || {};
-				const response: LockedSessionsMessage = {
-					type: "lockedSessions",
-					locks,
-				};
-				port.postMessage(response);
-			});
-		}
-	});
-
-	port.onDisconnect.addListener(() => {
-		closeSidepanel(windowId, false);
-	});
-});
-
-// Clean up locks when entire window closes (belt-and-suspenders)
-chrome.windows.onRemoved.addListener((windowId: number) => {
-	closeSidepanel(windowId, false);
-});
-
-// Handle keyboard shortcut - toggle sidepanel open/close
-chrome.commands.onCommand.addListener((command: string, sender?: chrome.tabs.Tab) => {
-	if (command === "toggle-sidepanel") {
-		if (!sender?.windowId) {
-			console.log("[Background] Cannot toggle sidepanel: sender windowId not available");
-			return;
-		}
-
-		const windowId = sender.windowId;
-
-		// Check synchronous cache (populated from storage on startup and updated by port events)
-		if (openSidepanels.has(windowId)) {
-			// Sidepanel is open - close it using Chrome 141+ API
-			closeSidepanel(windowId);
-		} else {
-			// Sidepanel is closed - open it
-			chrome.sidePanel.open({ windowId });
-		}
-	}
-});
-
-function closeSidepanel(windowId: number, callCloseOnSidePanelAPI: boolean = true) {
-	if (callCloseOnSidePanelAPI) {
-		(chrome.sidePanel as any).close({ windowId });
-	}
-
-	// Update cache synchronously
-	openSidepanels.delete(windowId);
-
-	// Clean up storage state (same logic as onDisconnect)
-	chrome.storage.session.get([SESSION_LOCKS_KEY, SIDEPANEL_OPEN_KEY], (data) => {
-		// Release session locks for this window
-		const sessionLocks: Record<string, number> = (data[SESSION_LOCKS_KEY] as Record<string, number>) || {};
-		for (const sessionId in sessionLocks) {
-			if (sessionLocks[sessionId] === windowId) {
-				delete sessionLocks[sessionId];
-			}
-		}
-
-		// Mark sidepanel as closed
-		const openWindows = new Set<number>((data[SIDEPANEL_OPEN_KEY] as number[]) || []);
-		openWindows.delete(windowId);
-
-		// Save both updates atomically
-		chrome.storage.session.set({
-			[SESSION_LOCKS_KEY]: sessionLocks,
-			[SIDEPANEL_OPEN_KEY]: Array.from(openWindows),
-		});
+function openPanelForTab(tabId: number): void {
+	const binding = bindings[String(tabId)];
+	const ownerTabId = binding?.ownerTabId ?? tabId;
+	const path = sidePanelPath(ownerTabId, binding?.sessionId);
+	void chrome.sidePanel.setOptions({ tabId, enabled: true, path });
+	void chrome.sidePanel.open({ tabId }).catch((error: unknown) => {
+		console.error("[Background] Failed to open side panel", error);
 	});
 }
+
+async function persist(): Promise<void> {
+	await chrome.storage.session.set({
+		[PANEL_MODEL_KEY]: "tab",
+		[SESSION_LOCKS_KEY]: locks,
+		[OPEN_PANELS_KEY]: Array.from(openPanels),
+		[BINDINGS_KEY]: bindings,
+	});
+}
+
+async function applyPanelOptions(): Promise<void> {
+	await chrome.sidePanel.setOptions({ enabled: false, path: "sidepanel.html" });
+	await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+	for (const [key, binding] of Object.entries(bindings)) {
+		const tabId = Number(key);
+		try {
+			await chrome.tabs.get(tabId);
+		} catch {
+			continue;
+		}
+		await chrome.sidePanel.setOptions({
+			tabId,
+			enabled: true,
+			path: sidePanelPath(binding.ownerTabId, binding.sessionId),
+		});
+	}
+}
+
+async function loadCache(): Promise<void> {
+	const data = await chrome.storage.session.get([
+		PANEL_MODEL_KEY,
+		SESSION_LOCKS_KEY,
+		OPEN_PANELS_KEY,
+		BINDINGS_KEY,
+		LEGACY_OPEN_KEY,
+	]);
+	if (data[PANEL_MODEL_KEY] !== "tab") {
+		locks = {};
+		openPanels = new Set();
+		bindings = {};
+		await chrome.storage.session.remove(LEGACY_OPEN_KEY);
+		await persist();
+	} else {
+		locks = (data[SESSION_LOCKS_KEY] as Record<string, number> | undefined) ?? {};
+		openPanels = new Set((data[OPEN_PANELS_KEY] as number[] | undefined) ?? []);
+		bindings = (data[BINDINGS_KEY] as Record<string, PanelBinding> | undefined) ?? {};
+	}
+	await applyPanelOptions();
+}
+
+cacheReady = loadCache().catch((error: unknown) => {
+	console.error("[Background] Failed to load panel state", error);
+});
+
+function rememberConnect(ownerTabId: number): void {
+	panelRefcounts.set(ownerTabId, (panelRefcounts.get(ownerTabId) ?? 0) + 1);
+	openPanels.add(ownerTabId);
+	void persist();
+}
+
+function rememberDisconnect(ownerTabId: number): void {
+	const count = (panelRefcounts.get(ownerTabId) ?? 1) - 1;
+	if (count > 0) {
+		panelRefcounts.set(ownerTabId, count);
+		return;
+	}
+	panelRefcounts.delete(ownerTabId);
+	openPanels.delete(ownerTabId);
+	locks = releaseLocksForOwner(locks, ownerTabId);
+	void persist();
+}
+
+function bindOwner(sessionId: string, ownerTabId: number): void {
+	const current = bindings[String(ownerTabId)];
+	bindings[String(ownerTabId)] = {
+		ownerTabId,
+		sessionId,
+		role: current?.role === "work" ? "work" : "host",
+	};
+}
+
+chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
+	const match = /^sidepanel:(\d+)$/.exec(port.name);
+	if (!match) return;
+	const ownerTabId = Number(match[1]);
+	let connected = false;
+	let disconnected = false;
+	port.onDisconnect.addListener(() => {
+		disconnected = true;
+		if (connected) rememberDisconnect(ownerTabId);
+	});
+	port.onMessage.addListener((msg: SidepanelToBackgroundMessage) => {
+		void cacheReady.then(() => handlePanelMessage(port, msg));
+	});
+	void cacheReady.then(() => {
+		if (disconnected) return;
+		connected = true;
+		rememberConnect(ownerTabId);
+	});
+});
+
+function handlePanelMessage(port: chrome.runtime.Port, msg: SidepanelToBackgroundMessage): void {
+	if (msg.type === "acquireLock") {
+		const decision = decideLock(locks, openPanels, msg.sessionId, msg.ownerTabId);
+		const response: LockResultMessage = decision.granted
+			? { type: "lockResult", sessionId: msg.sessionId, success: true }
+			: { type: "lockResult", sessionId: msg.sessionId, success: false, ownerTabId: decision.ownerTabId };
+		if (decision.granted) {
+			locks[msg.sessionId] = msg.ownerTabId;
+			bindOwner(msg.sessionId, msg.ownerTabId);
+			void persist();
+		}
+		port.postMessage(response);
+		return;
+	}
+	if (msg.type === "getLockedSessions") {
+		const response: LockedSessionsMessage = { type: "lockedSessions", locks };
+		port.postMessage(response);
+		return;
+	}
+	if (msg.type === "getBinding") {
+		const binding = bindings[String(msg.tabId)];
+		const response: BindingResultMessage = {
+			type: "bindingResult",
+			tabId: msg.tabId,
+			ownerTabId: binding?.ownerTabId,
+			sessionId: binding?.sessionId,
+			role: binding?.role,
+		};
+		port.postMessage(response);
+		return;
+	}
+	if (msg.type === "clearHostBinding") {
+		bindings = clearHostBinding(bindings, msg.tabId);
+		void persist();
+		const response: BindingClearedMessage = { type: "bindingCleared", tabId: msg.tabId };
+		port.postMessage(response);
+	}
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+	void cacheReady.then(() => {
+		delete bindings[String(tabId)];
+		openPanels.delete(tabId);
+		panelRefcounts.delete(tabId);
+		locks = releaseLocksForOwner(locks, tabId);
+		void persist();
+		void chrome.sidePanel.setOptions({ tabId, enabled: false }).catch(() => {});
+	});
+});
+
+chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
+	void cacheReady.then(async () => {
+		bindings = retargetBindings(bindings, removedTabId, addedTabId);
+		locks = rewriteLockOwner(locks, removedTabId, addedTabId);
+		if (openPanels.has(removedTabId)) {
+			openPanels.delete(removedTabId);
+			openPanels.add(addedTabId);
+		}
+		const count = panelRefcounts.get(removedTabId);
+		if (count !== undefined) {
+			panelRefcounts.delete(removedTabId);
+			panelRefcounts.set(addedTabId, count);
+		}
+		await persist();
+		const binding = bindings[String(addedTabId)];
+		if (!binding) return;
+		await chrome.sidePanel.setOptions({
+			tabId: addedTabId,
+			enabled: true,
+			path: sidePanelPath(binding.ownerTabId, binding.sessionId),
+		});
+	});
+});
+
+chrome.windows.onRemoved.addListener(() => {
+	void cacheReady.then(async () => {
+		const tabs = await chrome.tabs.query({});
+		const live = new Set(tabs.flatMap((tab) => (tab.id === undefined ? [] : [tab.id])));
+		for (const owner of new Set(Object.values(locks))) {
+			if (!live.has(owner)) locks = releaseLocksForOwner(locks, owner);
+		}
+		for (const owner of [...openPanels]) {
+			if (!live.has(owner)) {
+				openPanels.delete(owner);
+				panelRefcounts.delete(owner);
+			}
+		}
+		for (const key of Object.keys(bindings)) {
+			if (!live.has(Number(key))) delete bindings[key];
+		}
+		await persist();
+	});
+});
+
+chrome.commands.onCommand.addListener((command: string, tab?: chrome.tabs.Tab) => {
+	if (command !== "toggle-sidepanel") return;
+	if (tab?.id === undefined) {
+		console.log("[Background] Cannot open side panel: command tab id not available");
+		return;
+	}
+	openPanelForTab(tab.id);
+});

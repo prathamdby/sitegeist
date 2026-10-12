@@ -2,8 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- Bound each task to the tab it was opened on. The side panel is enabled only for that tab, and a tab with no task does not show it.
+
 ### Changed
 
+- Session locks now belong to the owning tab instead of the window, so two windows can show two tasks at the same time. A newly opened tab starts a new task instead of taking the latest chat. The side-panel shortcut opens the task for the active tab.
 - Migrated the agent runtime and model/auth registry to `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` 1.1.0, retaining the existing UI and stored data formats.
 - Replaced the web-ui storage implementation with application-owned persistence while retaining the version-3 database and rollback-compatible records.
 - Replaced the model selector and settings shell with local components, retaining provider filtering, browser OAuth and custom model discovery; exposed OpenCode API key entry.

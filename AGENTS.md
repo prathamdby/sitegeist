@@ -59,7 +59,7 @@ The script bumps the version in `static/manifest.chrome.json`, finalizes the cha
 ```
 src/
   sidepanel.ts          # Main entry point, agent setup, settings, rendering
-  background.ts         # Service worker (sidepanel toggle, session locks)
+  background.ts         # Service worker (per-tab side panel, session locks)
   oauth/                # Browser OAuth flows (Anthropic, OpenAI, GitHub, Gemini)
   dialogs/              # Settings tabs, API key dialogs, welcome setup
   tools/                # Agent tools (navigate, REPL, extract-image, skills, debugger)

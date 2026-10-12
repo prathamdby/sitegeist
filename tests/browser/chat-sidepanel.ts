@@ -20,7 +20,11 @@ const mockedChrome = {
 				const response: BackgroundToSidepanelMessage =
 					message.type === "acquireLock"
 						? { type: "lockResult", sessionId: message.sessionId, success: true }
-						: { type: "lockedSessions", locks: {} };
+						: message.type === "getBinding"
+							? { type: "bindingResult", tabId: message.tabId }
+							: message.type === "clearHostBinding"
+								? { type: "bindingCleared", tabId: message.tabId }
+								: { type: "lockedSessions", locks: {} };
 				queueMicrotask(() => {
 					for (const listener of portListeners) listener(response);
 				});

@@ -27,6 +27,7 @@ import {
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
 import { isOAuthCredentials, resolveApiKey } from "./oauth/index.js";
+import { parseHostTab } from "./panel/locks.js";
 import {
 	Agent,
 	type AgentEvent,
@@ -87,6 +88,7 @@ let agent: Agent;
 let chatPanel: ChatPanel;
 let agentUnsubscribe: (() => void) | undefined;
 let currentWindowId: number;
+let currentHostTabId: number | undefined;
 
 // Track which skills we've shown in full (skillName -> lastUpdated timestamp)
 // Reset when a new session/agent is created
@@ -294,7 +296,9 @@ const saveSession = async () => {
 
 const updateUrl = (sessionId: string) => {
 	const url = new URL(window.location.href);
+	url.searchParams.delete("new");
 	url.searchParams.set("session", sessionId);
+	if (currentHostTabId !== undefined) url.searchParams.set("hostTab", String(currentHostTabId));
 	window.history.replaceState({}, "", url);
 };
 
@@ -400,17 +404,19 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 				currentSessionId = agent.sessionId ?? crypto.randomUUID();
 				agent.sessionId = currentSessionId;
 
-				port
-					.sendMessage({
-						type: "acquireLock",
-						sessionId: currentSessionId,
-						windowId: currentWindowId,
-					})
-					.then((lockResponse) => {
-						if (!lockResponse.success) {
-							console.warn("Failed to acquire lock for newly created session", currentSessionId);
-						}
-					});
+				if (currentHostTabId !== undefined) {
+					port
+						.sendMessage({
+							type: "acquireLock",
+							sessionId: currentSessionId,
+							ownerTabId: currentHostTabId,
+						})
+						.then((lockResponse) => {
+							if (!lockResponse.success) {
+								console.warn("Failed to acquire lock for newly created session", currentSessionId);
+							}
+						});
+				}
 				updateUrl(currentSessionId);
 			}
 
@@ -569,16 +575,21 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 };
 
 const loadSession = (sessionId: string) => {
-	// Navigation will disconnect port and auto-release locks
 	const url = new URL(window.location.href);
+	url.search = "";
+	if (currentHostTabId !== undefined) url.searchParams.set("hostTab", String(currentHostTabId));
 	url.searchParams.set("session", sessionId);
 	window.location.href = url.toString();
 };
 
 const newSession = () => {
-	// Navigation will disconnect port and auto-release locks
+	if (currentHostTabId !== undefined) {
+		void port.sendMessage({ type: "clearHostBinding", tabId: currentHostTabId }).catch(() => {});
+	}
 	const url = new URL(window.location.href);
-	url.search = "?new=true";
+	url.search = "";
+	if (currentHostTabId !== undefined) url.searchParams.set("hostTab", String(currentHostTabId));
+	url.searchParams.set("new", "true");
 	window.location.href = url.toString();
 };
 
@@ -601,11 +612,11 @@ const renderApp = () => {
 									loadSession(sessionId);
 								},
 								(deletedSessionId: string) => {
-									// Only reload if the current session was deleted
 									if (deletedSessionId === currentSessionId) {
 										newSession();
 									}
 								},
+								currentHostTabId ?? 0,
 							);
 						},
 						title: "Sessions",
@@ -765,7 +776,7 @@ window.addEventListener(
 		// Cmd+U (Mac) or Ctrl+U (Windows/Linux) to open debug page
 		if ((e.metaKey || e.ctrlKey) && e.key === "u") {
 			e.preventDefault();
-			window.location.href = "./debug.html";
+			window.location.href = `./debug.html${window.location.search}`;
 		}
 
 		// Cmd+Shift+K (Mac) or Ctrl+Shift+K (Windows/Linux) to show session costs
@@ -861,15 +872,29 @@ async function initApp() {
 	const showJsonModeEnabled = (stored.showJsonMode as boolean) || false;
 	setShowJsonMode(showJsonModeEnabled);
 
-	// Get current window ID for filtering tab events
 	const currentWindow = await chrome.windows.getCurrent();
 	if (!currentWindow.id) {
 		throw new Error("Failed to get current window ID");
 	}
 	currentWindowId = currentWindow.id;
+	currentHostTabId = parseHostTab(window.location.search);
+	if (currentHostTabId === undefined) {
+		const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+		currentHostTabId = activeTab?.id;
+	}
+	if (currentHostTabId === undefined) {
+		render(
+			html`
+				<div class="w-full h-full flex items-center justify-center bg-background text-foreground p-6 text-center text-sm text-muted-foreground">
+					Open Sitegeist from the toolbar icon on a tab.
+				</div>
+			`,
+			document.body,
+		);
+		return;
+	}
 
-	// Initialize port communication system
-	port.initialize(currentWindowId);
+	port.initialize(currentHostTabId);
 
 	// TODO reenable Request persistent storage
 	// if (storage.sessions) {
@@ -896,43 +921,32 @@ async function initApp() {
 		return;
 	}
 
-	// Check for session in URL
 	const urlParams = new URLSearchParams(window.location.search);
 	let sessionIdFromUrl = urlParams.get("session");
 	const isNewSession = urlParams.get("new") === "true";
 
-	// If no session in URL and not explicitly creating new, try to load the most recent session
-	if (!sessionIdFromUrl && !isNewSession && storage.sessions) {
-		const latestSessionId = await storage.sessions.getLatestSessionId();
-		if (latestSessionId) {
-			// Try to acquire lock for latest session
-			const lockResponse = await port.sendMessage({
-				type: "acquireLock",
-				sessionId: latestSessionId,
-				windowId: currentWindowId,
-			});
-
-			if (lockResponse.success) {
-				sessionIdFromUrl = latestSessionId;
-				// Update URL to include the latest session
-				updateUrl(latestSessionId);
-			}
-			// If lock fails, fall through to create new session
+	if (isNewSession) {
+		await port.sendMessage({ type: "clearHostBinding", tabId: currentHostTabId });
+		sessionIdFromUrl = null;
+	} else if (!sessionIdFromUrl) {
+		const binding = await port.sendMessage({ type: "getBinding", tabId: currentHostTabId });
+		if (binding.sessionId) {
+			sessionIdFromUrl = binding.sessionId;
+			updateUrl(binding.sessionId);
 		}
 	}
 
 	if (sessionIdFromUrl && storage.sessions) {
 		const sessionData = await storage.sessions.loadSession(sessionIdFromUrl);
 		if (sessionData) {
-			// Try to acquire lock if we don't already have it (in case user navigated directly via URL)
 			const lockResponse = await port.sendMessage({
 				type: "acquireLock",
 				sessionId: sessionIdFromUrl,
-				windowId: currentWindowId,
+				ownerTabId: currentHostTabId,
 			});
 
 			if (!lockResponse.success) {
-				// Session is locked in another window - show landing page instead
+				// Session is open on another tab. This tab starts its own task.
 				await createAgent();
 				if (agent) {
 					const welcomeMessage = createWelcomeMessage(tutorials);

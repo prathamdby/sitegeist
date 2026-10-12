@@ -19,8 +19,8 @@ type ExportedSession = {
 export class SitegeistSessionListDialog extends DialogBase {
 	@state() private sessions: SessionMetadata[] = [];
 	@state() private loading = true;
-	@state() private sessionLocks: Record<string, number> = {}; // sessionId -> windowId
-	@state() private currentWindowId: number | undefined;
+	@state() private sessionLocks: Record<string, number> = {};
+	@state() private ownerTabId: number | undefined;
 	@state() private searchQuery = "";
 	@state() private showDeleteMenu = false;
 
@@ -51,10 +51,15 @@ export class SitegeistSessionListDialog extends DialogBase {
 		}
 	};
 
-	static async open(onSelect: (sessionId: string) => void, onDelete?: (sessionId: string) => void) {
+	static async open(
+		onSelect: (sessionId: string) => void,
+		onDelete: ((sessionId: string) => void) | undefined,
+		ownerTabId: number,
+	) {
 		const dialog = new SitegeistSessionListDialog();
 		dialog.onSelectCallback = onSelect;
 		dialog.onDeleteCallback = onDelete;
+		dialog.ownerTabId = ownerTabId;
 		dialog.open();
 		await dialog.loadSessionsAndLocks();
 	}
@@ -62,11 +67,6 @@ export class SitegeistSessionListDialog extends DialogBase {
 	private async loadSessionsAndLocks() {
 		this.loading = true;
 		try {
-			// Get current window ID
-			const currentWindow = await chrome.windows.getCurrent();
-			this.currentWindowId = currentWindow.id;
-
-			// Load sessions (already sorted by lastModified index)
 			const storage = getAppStorage();
 			this.sessions = await storage.sessions.getAllMetadata();
 
@@ -141,13 +141,13 @@ export class SitegeistSessionListDialog extends DialogBase {
 	}
 
 	private isSessionLocked(sessionId: string): boolean {
-		const lockWindowId = this.sessionLocks[sessionId];
-		return lockWindowId !== undefined && lockWindowId !== this.currentWindowId;
+		const owner = this.sessionLocks[sessionId];
+		return owner !== undefined && owner !== this.ownerTabId;
 	}
 
 	private isCurrentSession(sessionId: string): boolean {
-		const lockWindowId = this.sessionLocks[sessionId];
-		return lockWindowId !== undefined && lockWindowId === this.currentWindowId;
+		const owner = this.sessionLocks[sessionId];
+		return owner !== undefined && owner === this.ownerTabId;
 	}
 
 	private async handleExport(sessionId?: string) {

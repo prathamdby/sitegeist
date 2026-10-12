@@ -5,7 +5,7 @@
 	"description": "Your AI companion for the web - Research, automate, create",
 	"version": "1.0.0",
 	"action": {
-		"default_title": "Click to open side panel"
+		"default_title": "Open Sitegeist for this tab"
 	},
 	"background": {
 		"service_worker": "background.js",
@@ -16,16 +16,13 @@
 		"48": "icon-48.png",
 		"128": "icon-128.png"
 	},
-	"side_panel": {
-		"default_path": "sidepanel.html"
-	},
 	"commands": {
 		"toggle-sidepanel": {
 			"suggested_key": {
 				"default": "Ctrl+Shift+S",
 				"mac": "Command+Shift+S"
 			},
-			"description": "Toggle side panel"
+			"description": "Open side panel for this tab"
 		}
 	},
 	"permissions": [

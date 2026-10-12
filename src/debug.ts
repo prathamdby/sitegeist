@@ -103,7 +103,7 @@ const renderDebugPage = async () => {
 						size: "sm",
 						children: icon(ArrowLeft, "sm"),
 						onClick: () => {
-							window.location.href = "./sidepanel.html";
+							window.location.href = `./sidepanel.html${window.location.search}`;
 						},
 						title: "Back to chat",
 					})}
@@ -234,7 +234,7 @@ const renderDebugPage = async () => {
 window.addEventListener("keydown", (e) => {
 	if ((e.metaKey || e.ctrlKey) && e.key === "u") {
 		e.preventDefault();
-		window.location.href = "./sidepanel.html";
+		window.location.href = `./sidepanel.html${window.location.search}`;
 	}
 });
 
