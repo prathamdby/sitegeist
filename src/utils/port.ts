@@ -130,6 +130,7 @@ export interface WorkTargetMessage {
 	url?: string;
 	title?: string;
 	favIconUrl?: string;
+	error?: string;
 }
 
 export interface ShareActiveTabMessage {
@@ -152,6 +153,7 @@ export interface RenameWorkGroupMessage {
 
 export interface WorkGroupRenamedMessage {
 	type: "workGroupRenamed";
+	error?: string;
 }
 
 export interface CaptureWorkTabMessage {

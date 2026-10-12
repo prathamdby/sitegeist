@@ -64,7 +64,7 @@ function fakeBackend() {
 			return [...tabs.values()].find((tab) => tab.windowId === windowId && tab.active);
 		},
 	};
-	return { backend, tabs, groups, calls };
+	return { backend, tabs, groups, calls, titles };
 }
 
 test("a task tab is created inactive and stays inside its group", async () => {
@@ -147,6 +147,105 @@ test("sharing rejects restricted pages and tabs owned by another task", async ()
 	await assert.rejects(() => book.share("session-a", 1, tabs.get(2)), /another task/);
 	await assert.rejects(() => book.share("session-a", 1, tabs.get(3)), /cannot be used/);
 	assert.equal(isRestrictedPage("about:blank"), true);
+	assert.equal(isRestrictedPage("file:///tmp/page.html"), true);
 	assert.equal(isRestrictedPage("https://example.com"), false);
 	assert.equal(colorForSession("session-a"), colorForSession("session-a"));
+});
+
+test("opening a restricted url does not create a tab", async () => {
+	const { backend, calls } = fakeBackend();
+	const book = new WorkSessionBook(backend);
+	await assert.rejects(() => book.open("session-a", 1, "chrome://newtab", false), /cannot be used/);
+	await assert.rejects(() => book.open("session-a", 1, "file:///tmp/page.html", true), /cannot be used/);
+	assert.equal(calls.created.length, 0);
+	assert.equal(book.get("session-a")?.tabIds.length, 0);
+});
+
+test("shareActive rejects an empty window and a restricted active tab", async () => {
+	const { backend, tabs } = fakeBackend();
+	const book = new WorkSessionBook(backend);
+	for (const tab of tabs.values()) tab.active = false;
+	await assert.rejects(() => book.shareActive("session-a", 1), /No tab is active/);
+	tabs.get(3).active = true;
+	await assert.rejects(() => book.shareActive("session-a", 1), /cannot be used/);
+	assert.equal(book.get("session-a")?.tabIds.length ?? 0, 0);
+});
+
+test("a closed work tab is dropped from the list and from the current tab", async () => {
+	const { backend, tabs } = fakeBackend();
+	const book = new WorkSessionBook(backend);
+	const first = await book.open("session-a", 1, "https://one.example", false);
+	const second = await book.open("session-a", 1, "https://two.example", true);
+	tabs.delete(second.id);
+	assert.equal(await book.current("session-a"), undefined);
+	const listed = await book.list("session-a");
+	assert.deepEqual(
+		listed.map((tab) => tab.id),
+		[first.id],
+	);
+	assert.equal(book.get("session-a")?.currentTabId, first.id);
+});
+
+test("select keeps the previous tab when the chosen tab is already gone", async () => {
+	const { backend, tabs } = fakeBackend();
+	const book = new WorkSessionBook(backend);
+	const first = await book.open("session-a", 1, "https://one.example", false);
+	const second = await book.open("session-a", 1, "https://two.example", true);
+	tabs.delete(first.id);
+	await assert.rejects(() => book.select("session-a", first.id, false), /missing/);
+	assert.equal(book.get("session-a")?.currentTabId, second.id);
+});
+
+test("restore drops a dead task and promotes a live tab when the owner is gone", async () => {
+	const { backend } = fakeBackend();
+	const book = new WorkSessionBook(backend);
+	const first = await book.open("session-a", 1, "https://one.example", false);
+	const second = await book.open("session-a", 1, "https://two.example", true);
+	const promoted = await book.discardMissing(new Set([second.id]));
+	assert.equal(promoted[0]?.previousOwnerTabId, 1);
+	assert.equal(book.get("session-a")?.ownerTabId, second.id);
+	assert.deepEqual(book.get("session-a")?.tabIds, [second.id]);
+	assert.equal(book.get("session-a")?.currentTabId, second.id);
+	await book.discardMissing(new Set());
+	assert.equal(book.get("session-a"), undefined);
+	assert.ok(first.id);
+});
+
+test("rename truncates the title and skips retitle until a group exists", async () => {
+	const { backend, titles } = fakeBackend();
+	const book = new WorkSessionBook(backend);
+	await book.rename("missing", "Hello");
+	assert.equal(book.get("missing"), undefined);
+	const tab = await book.open("session-a", 1, "https://one.example", false);
+	await book.rename("session-a", "x".repeat(140));
+	assert.equal(book.get("session-a")?.title.length, 100);
+	assert.equal(titles.get(tab.groupId)?.title.length, 100);
+	await book.rename("session-a", "");
+	assert.equal(book.get("session-a")?.title, "Sitegeist");
+});
+
+test("replace and remove rewrite the current tab and a debugger block", async () => {
+	const { backend } = fakeBackend();
+	const book = new WorkSessionBook(backend);
+	const first = await book.open("session-a", 1, "https://one.example", false);
+	const second = await book.open("session-a", 1, "https://two.example", true);
+	book.blockDebugger(second.id);
+	book.blockDebugger(second.id);
+	assert.deepEqual(book.get("session-a")?.debuggerBlockedTabIds, [second.id]);
+	await book.replaceTab(second.id, 77);
+	assert.equal(book.get("session-a")?.currentTabId, 77);
+	assert.deepEqual(book.get("session-a")?.debuggerBlockedTabIds, [77]);
+	book.clearDebuggerBlock(77);
+	assert.deepEqual(book.get("session-a")?.debuggerBlockedTabIds, []);
+	book.blockDebugger(first.id);
+	book.removeTab(first.id);
+	assert.equal(book.get("session-a")?.currentTabId, 77);
+	assert.deepEqual(book.get("session-a")?.debuggerBlockedTabIds, []);
+});
+
+test("a popup from an unknown tab is ignored", async () => {
+	const { backend, calls } = fakeBackend();
+	const book = new WorkSessionBook(backend);
+	assert.equal(await book.adoptPopup(999, 50), false);
+	assert.deepEqual(calls.activated, []);
 });

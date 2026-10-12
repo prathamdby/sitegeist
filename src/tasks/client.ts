@@ -45,6 +45,7 @@ export async function selectWorkTab(sessionId: string, tabId: number, reveal: bo
 
 export async function getWorkTarget(sessionId: string): Promise<WorkTabInfo | undefined> {
 	const result = await port.sendMessage({ type: "getWorkTarget", sessionId });
+	if (result.error) throw new Error(result.error);
 	if (result.tabId === undefined || result.windowId === undefined) return undefined;
 	return {
 		id: result.tabId,
@@ -63,7 +64,8 @@ export async function shareActiveTab(sessionId: string, ownerTabId: number): Pro
 }
 
 export async function renameWorkGroup(sessionId: string, title: string): Promise<void> {
-	await port.sendMessage({ type: "renameWorkGroup", sessionId, title });
+	const result = await port.sendMessage({ type: "renameWorkGroup", sessionId, title });
+	if (result.error) throw new Error(result.error);
 }
 
 export async function captureWorkTab(sessionId: string): Promise<string> {

@@ -52,7 +52,8 @@ export function isRestrictedPage(url: string | undefined): boolean {
 		url.startsWith("about:") ||
 		url.startsWith("edge://") ||
 		url.startsWith("devtools://") ||
-		url.startsWith("view-source:")
+		url.startsWith("view-source:") ||
+		url.startsWith("file:")
 	);
 }
 
@@ -123,6 +124,7 @@ export class WorkSessionBook {
 		if (!newTab && session.currentTabId !== null) {
 			return this.backend.get(session.currentTabId);
 		}
+		if (isRestrictedPage(url)) throw new Error("That page cannot be used by a task");
 		const created = await this.backend.createInactive(session.windowId, url);
 		const groupId = await this.backend.group(created.id, session.windowId, session.groupId);
 		session.groupId = groupId;
@@ -137,9 +139,16 @@ export class WorkSessionBook {
 		const session = this.sessions.get(sessionId);
 		if (!session) return [];
 		const tabs: WorkTab[] = [];
-		for (const tabId of session.tabIds) {
-			const tab = await this.backend.get(tabId);
+		const live: number[] = [];
+		for (const tabId of [...session.tabIds]) {
+			const tab = await this.readLiveTab(session, tabId);
+			if (!tab) continue;
+			live.push(tabId);
 			tabs.push({ ...tab, active: tab.id === session.currentTabId });
+		}
+		session.tabIds = live;
+		if (session.currentTabId !== null && !live.includes(session.currentTabId)) {
+			session.currentTabId = live[0] ?? null;
 		}
 		return tabs;
 	}
@@ -149,18 +158,20 @@ export class WorkSessionBook {
 		if (!session || !session.tabIds.includes(tabId)) {
 			throw new Error(`Tab ${tabId} is not in this task`);
 		}
-		session.currentTabId = tabId;
 		if (reveal) {
 			await this.backend.activate(tabId);
 			await this.backend.focusWindow(session.windowId);
 		}
-		return this.backend.get(tabId);
+		const tab = await this.backend.get(tabId);
+		session.currentTabId = tabId;
+		return tab;
 	}
 
 	async current(sessionId: string): Promise<WorkTab | undefined> {
 		const session = this.sessions.get(sessionId);
 		if (!session?.currentTabId) return undefined;
-		const tab = await this.backend.get(session.currentTabId);
+		const tab = await this.readLiveTab(session, session.currentTabId);
+		if (!tab) return undefined;
 		return { ...tab, active: true };
 	}
 
@@ -248,7 +259,10 @@ export class WorkSessionBook {
 		session.debuggerBlockedTabIds = session.debuggerBlockedTabIds.filter((id) => id !== tabId);
 	}
 
-	async discardMissing(liveTabIds: ReadonlySet<number>): Promise<void> {
+	async discardMissing(
+		liveTabIds: ReadonlySet<number>,
+	): Promise<Array<{ session: WorkSession; previousOwnerTabId: number }>> {
+		const promoted: Array<{ session: WorkSession; previousOwnerTabId: number }> = [];
 		for (const [sessionId, session] of this.sessions) {
 			const live = session.tabIds.filter((id) => liveTabIds.has(id));
 			if (live.length === 0 && !liveTabIds.has(session.ownerTabId)) {
@@ -256,9 +270,27 @@ export class WorkSessionBook {
 				continue;
 			}
 			session.tabIds = live;
+			session.debuggerBlockedTabIds = session.debuggerBlockedTabIds.filter((id) => liveTabIds.has(id));
 			if (session.currentTabId !== null && !live.includes(session.currentTabId)) {
 				session.currentTabId = live[0] ?? null;
 			}
+			if (!liveTabIds.has(session.ownerTabId) && live.length > 0) {
+				const previousOwnerTabId = session.ownerTabId;
+				session.ownerTabId = session.currentTabId ?? live[0];
+				promoted.push({ session, previousOwnerTabId });
+			}
+		}
+		return promoted;
+	}
+
+	private async readLiveTab(session: WorkSession, tabId: number): Promise<WorkTab | undefined> {
+		try {
+			return await this.backend.get(tabId);
+		} catch {
+			session.tabIds = session.tabIds.filter((id) => id !== tabId);
+			session.debuggerBlockedTabIds = session.debuggerBlockedTabIds.filter((id) => id !== tabId);
+			if (session.currentTabId === tabId) session.currentTabId = session.tabIds[0] ?? null;
+			return undefined;
 		}
 	}
 }
