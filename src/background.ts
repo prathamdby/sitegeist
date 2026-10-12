@@ -8,6 +8,7 @@ import {
 	rewriteLockOwner,
 	sidePanelPath,
 } from "./panel/locks.js";
+import { deliverRunnerMessage, type RunnerEndpoint } from "./tasks/router.js";
 import { handleWorkMessage, startWorkSessions } from "./tasks/service.js";
 import type { WorkSession } from "./tasks/work-session.js";
 import { relayOverlayAbortMessage } from "./tools/repl/overlay-abort.js";
@@ -176,7 +177,55 @@ function bindOwner(sessionId: string, ownerTabId: number): void {
 	};
 }
 
+const runnerPorts = new Map<number, RunnerEndpoint>();
+const runnerViewPorts = new Map<number, Set<RunnerEndpoint>>();
+
+async function ensureOffscreen(): Promise<void> {
+	const contexts = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] });
+	if (contexts.length > 0) return;
+	await chrome.offscreen.createDocument({
+		url: "runner-host.html",
+		reasons: ["IFRAME_SCRIPTING"],
+		justification: "Keep each task running while its side panel is hidden.",
+	});
+}
+
+async function ensureRunner(ownerTabId: number): Promise<void> {
+	await cacheReady;
+	const sessionId = bindings[String(ownerTabId)]?.sessionId ?? null;
+	await ensureOffscreen();
+	await chrome.runtime.sendMessage({ type: "ensureRunnerFrame", ownerTabId, sessionId }).catch((error: unknown) => {
+		console.warn("[Background] Task runner frame was not created", error);
+	});
+}
+
 chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
+	const runnerMatch = /^runner:(\d+)$/.exec(port.name);
+	if (runnerMatch) {
+		const ownerTabId = Number(runnerMatch[1]);
+		runnerPorts.set(ownerTabId, port);
+		port.onMessage.addListener((message: unknown) => {
+			deliverRunnerMessage(runnerPorts, runnerViewPorts, ownerTabId, "runner", message);
+		});
+		port.onDisconnect.addListener(() => {
+			if (runnerPorts.get(ownerTabId) === port) runnerPorts.delete(ownerTabId);
+		});
+		return;
+	}
+	const viewMatch = /^runner-view:(\d+)$/.exec(port.name);
+	if (viewMatch) {
+		const ownerTabId = Number(viewMatch[1]);
+		const views = runnerViewPorts.get(ownerTabId) ?? new Set<RunnerEndpoint>();
+		views.add(port);
+		runnerViewPorts.set(ownerTabId, views);
+		port.onMessage.addListener((message: unknown) => {
+			deliverRunnerMessage(runnerPorts, runnerViewPorts, ownerTabId, "view", message);
+		});
+		port.onDisconnect.addListener(() => {
+			views.delete(port);
+		});
+		return;
+	}
 	const match = /^sidepanel:(\d+)$/.exec(port.name);
 	if (!match) return;
 	const ownerTabId = Number(match[1]);
@@ -197,6 +246,7 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 		if (disconnected) return;
 		connected = true;
 		rememberConnect(ownerTabId);
+		void ensureRunner(ownerTabId);
 	});
 });
 

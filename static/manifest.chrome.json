@@ -35,6 +35,7 @@
 		"webNavigation",
 		"debugger",
 		"tabGroups",
+		"offscreen",
 		"declarativeNetRequest"
 	],
 	"host_permissions": [

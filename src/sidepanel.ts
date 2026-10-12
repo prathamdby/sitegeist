@@ -28,6 +28,7 @@ import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
 import { isOAuthCredentials, resolveApiKey } from "./oauth/index.js";
 import { parseHostTab } from "./panel/locks.js";
+import type { ThinkingLevel } from "./pi/agent.js";
 import {
 	Agent,
 	type AgentEvent,
@@ -41,6 +42,7 @@ import { getModel, getModels, getProviders, ModelConfiguration } from "./pi/mode
 import { navigationSteeringGate } from "./pi/navigation-steering.js";
 import { applyModelSelection, DEFAULT_MODELS, resolveInitialModel } from "./pi/selection.js";
 import { createStreamFn } from "./pi/stream.js";
+import { ViewAgent } from "./pi/view-agent.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
 import { SitegeistAppStorage, setAppStorage } from "./storage/app-storage.js";
 import { getWorkTarget, renameWorkGroup, setTaskContext, shareActiveTab } from "./tasks/client.js";
@@ -90,6 +92,8 @@ let chatPanel: ChatPanel;
 let agentUnsubscribe: (() => void) | undefined;
 let currentWindowId: number;
 let currentHostTabId: number | undefined;
+const isRunnerDocument = new URLSearchParams(window.location.search).get("runner") === "1";
+let viewOnly = false;
 let announcedTitle = "";
 
 setTaskContext(() => ({
@@ -318,6 +322,68 @@ const updateUrl = (sessionId: string) => {
 	window.history.replaceState({}, "", url);
 };
 
+async function noteCurrentPage(): Promise<void> {
+	if (!agent) return;
+	const tab = currentSessionId
+		? await getWorkTarget(currentSessionId)
+		: (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+	if (!tab?.url || tab.url.startsWith("chrome-extension://") || tab.url.startsWith("moz-extension://")) return;
+	let lastUrl: string | undefined;
+	for (let i = agent.state.messages.length - 1; i >= 0; i--) {
+		const msg = agent.state.messages[i];
+		if (msg.role === "navigation") {
+			lastUrl = (msg as NavigationMessage).url;
+			break;
+		}
+		if (msg.role === "toolResult" && (msg as { toolName?: string }).toolName === "navigate") {
+			lastUrl = (msg as { details?: { finalUrl?: string } }).details?.finalUrl;
+			break;
+		}
+	}
+	if (!lastUrl || lastUrl !== tab.url) {
+		const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
+		agent.appendMessage(navMessage);
+	}
+}
+
+function bindView(view: ViewAgent): void {
+	if (currentHostTabId === undefined) return;
+	const link = chrome.runtime.connect({ name: `runner-view:${currentHostTabId}` });
+	view.onPrompt = (input) => link.postMessage({ type: "prompt", input });
+	view.onAbort = () => link.postMessage({ type: "abort" });
+	view.onThinking = (level) => link.postMessage({ type: "thinking", level });
+	link.onMessage.addListener((message: { type?: string; event?: AgentEvent; messages?: AgentMessage[] }) => {
+		if (message.messages) view.state.messages = message.messages;
+		if (message.type === "event" && message.event) view.play(message.event);
+		else if (message.type === "snapshot") view.play({ type: "agent_end", messages: view.state.messages });
+	});
+}
+
+function bindRunner(live: Agent): void {
+	if (currentHostTabId === undefined) return;
+	const link = chrome.runtime.connect({ name: `runner:${currentHostTabId}` });
+	link.onMessage.addListener((message: { type?: string; input?: string | AgentMessage; level?: ThinkingLevel }) => {
+		if (message.type === "prompt" && message.input !== undefined) {
+			void noteCurrentPage().then(() => live.prompt(message.input as string | AgentMessage));
+		}
+		if (message.type === "abort") live.abort();
+		if (message.type === "thinking" && message.level) live.setThinkingLevel(message.level);
+	});
+	const publish = (event?: AgentEvent) => {
+		try {
+			link.postMessage(
+				event
+					? { type: "event", event, messages: live.state.messages }
+					: { type: "snapshot", messages: live.state.messages },
+			);
+		} catch (error) {
+			console.warn("[Runner] Failed to publish", error);
+		}
+	};
+	live.subscribe((event) => publish(event));
+	publish();
+}
+
 const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true) => {
 	agent?.abort();
 	if (agentUnsubscribe) {
@@ -350,7 +416,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		await getProvidersWithKeys(),
 	);
 
-	agent = new Agent({
+	agent = new (viewOnly ? ViewAgent : Agent)({
 		initialState: {
 			systemPrompt: SYSTEM_PROMPT,
 			thinkingLevel: "medium",
@@ -388,7 +454,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 	await updateAuthLabel();
 
-	if (shouldSave) {
+	if (shouldSave && !viewOnly) {
 		agentUnsubscribe = agent.subscribe((event: AgentEvent) => {
 			const messages = agent.state.messages;
 
@@ -480,34 +546,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 				providers,
 			);
 		},
-		onBeforeSend: async () => {
-			if (!agent) return;
-
-			const tab = currentSessionId
-				? await getWorkTarget(currentSessionId)
-				: (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
-			if (!tab?.url || tab.url.startsWith("chrome-extension://") || tab.url.startsWith("moz-extension://")) return;
-
-			// Find most recent navigation (either nav message or nav tool result)
-			let lastUrl: string | undefined;
-			for (let i = agent.state.messages.length - 1; i >= 0; i--) {
-				const msg = agent.state.messages[i];
-				if (msg.role === "navigation") {
-					lastUrl = (msg as NavigationMessage).url;
-					break;
-				}
-				if (msg.role === "toolResult" && (msg as any).toolName === "navigate") {
-					lastUrl = (msg as any).details?.finalUrl;
-					break;
-				}
-			}
-
-			// Only add if URL changed
-			if (!lastUrl || lastUrl !== tab.url) {
-				const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
-				agent.appendMessage(navMessage);
-			}
-		},
+		onBeforeSend: () => noteCurrentPage(),
 		onCostClick: () => {
 			if (!agent) return;
 			SessionCostDialog.open(agent.state.messages);
@@ -587,6 +626,8 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			});
 		}
 	}
+	if (agent instanceof ViewAgent) bindView(agent);
+	if (isRunnerDocument) bindRunner(agent);
 };
 
 const loadSession = (sessionId: string) => {
@@ -878,6 +919,7 @@ async function testSteps(): Promise<boolean> {
 // INIT
 // ============================================================================
 async function initApp() {
+	viewOnly = !isRunnerDocument && Boolean(chrome.offscreen?.createDocument);
 	// Show loading
 	render(
 		html`

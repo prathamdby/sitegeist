@@ -18,6 +18,7 @@ const entryPoints = {
 	debug: join(packageRoot, "src/debug.ts"),
 	icons: join(packageRoot, "src/icons.ts"),
 	background: join(packageRoot, "src/background.ts"),
+	"runner-host": join(packageRoot, "src/tasks/runner-host.ts"),
 };
 
 rmSync(outDir, { recursive: true, force: true });
