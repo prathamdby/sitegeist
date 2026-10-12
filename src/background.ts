@@ -1,6 +1,7 @@
 import {
 	clearHostBinding,
 	decideLock,
+	foreignLockOwner,
 	foreignPanelRequest,
 	type PanelBinding,
 	releaseLocksForOwner,
@@ -163,6 +164,8 @@ function rememberDisconnect(ownerTabId: number): void {
 		return;
 	}
 	panelRefcounts.delete(ownerTabId);
+	// Leave openPanels set. This port also drops on idle timeout and when the
+	// user switches tabs, and the session stays with this tab until the tab is gone.
 }
 
 function bindOwner(sessionId: string, ownerTabId: number): void {
@@ -197,11 +200,12 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 function handlePanelMessage(port: chrome.runtime.Port, msg: SidepanelToBackgroundMessage, ownerTabId: number): void {
 	if (foreignPanelRequest(ownerTabId, msg)) {
 		if (msg.type === "acquireLock") {
+			const recordedOwner = foreignLockOwner(locks, msg.sessionId);
 			const response: LockResultMessage = {
 				type: "lockResult",
 				sessionId: msg.sessionId,
 				success: false,
-				ownerTabId,
+				...(recordedOwner !== undefined ? { ownerTabId: recordedOwner } : {}),
 			};
 			port.postMessage(response);
 		} else if (msg.type === "getBinding") {

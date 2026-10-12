@@ -3,6 +3,7 @@ import test from "node:test";
 import {
 	clearHostBinding,
 	decideLock,
+	foreignLockOwner,
 	foreignPanelRequest,
 	parseHostTab,
 	releaseLocksForOwner,
@@ -36,6 +37,11 @@ test("a panel message for another tab is foreign to the connection", () => {
 	assert.equal(foreignPanelRequest(4, { type: "getBinding", tabId: 9 }), true);
 	assert.equal(foreignPanelRequest(4, { type: "clearHostBinding", tabId: 4 }), false);
 	assert.equal(foreignPanelRequest(4, { type: "getLockedSessions" }), false);
+});
+
+test("a foreign lock denial names the recorded owner", () => {
+	assert.equal(foreignLockOwner({ a: 4 }, "a"), 4);
+	assert.equal(foreignLockOwner({ a: 4 }, "missing"), undefined);
 });
 
 test("releasing an owner drops only that owner's sessions", () => {

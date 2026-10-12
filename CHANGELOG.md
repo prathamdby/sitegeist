@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- A tab that is refused a session locked by another tab drops that session from its panel URL, and a mismatched lock request reports the recorded owner.
 - Kept a session lock when the side-panel port times out, and ignored panel messages that name a different tab than the connection.
 - Bound REPL Stop messages and overlay cleanup to their originating tab and execution, rejecting stale or forged requests.
 - Quoted native-input selectors in debugger error expressions and reported missing browser-script results as execution failures.

@@ -809,6 +809,7 @@ test("a session locked on another tab starts a fresh task", async () => {
 	try {
 		await page.goto(`${origin}/header?session=header-fixture&lock=denied`);
 		await page.locator("welcome-message").waitFor();
+		assert.equal(new URL(page.url()).searchParams.get("session"), null);
 		assert.equal(await page.getByTitle("Click to edit title").count(), 0);
 		assert.equal(
 			await page.evaluate(
