@@ -78,7 +78,7 @@ after(async () => {
 	try {
 		if (measurementsPath) writeFileSync(measurementsPath, JSON.stringify(measurements, null, 2));
 		await browser?.close();
-		await new Promise((resolve) => server?.close(resolve));
+		await new Promise((resolve) => server?.close(resolve) ?? resolve());
 	} finally {
 		if (work) rmSync(work, { recursive: true, force: true });
 	}
