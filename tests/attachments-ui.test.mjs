@@ -14,6 +14,7 @@ import { documentFixtures } from "./attachments-ui-data.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 let work;
 let diagnostics;
+let ownedDiagnostics;
 
 function ownedDirectory(prefix) {
 	const directory = mkdtempSync(join(tmpdir(), prefix));
@@ -86,7 +87,11 @@ const attachments = [
 
 before(async () => {
 	work = ownedDirectory("sitegeist-attachments-ui-");
-	diagnostics = renders || ownedDirectory("sitegeist-attachments-diagnostics-");
+	if (renders) diagnostics = renders;
+	else {
+		ownedDiagnostics = ownedDirectory("sitegeist-attachments-diagnostics-");
+		diagnostics = ownedDiagnostics;
+	}
 	if (renders) mkdirSync(renders, { recursive: true });
 	execFileSync(`${root}node_modules/.bin/tailwindcss`, ["-i", `${root}src/app.css`, "-o", join(work, "app.css")], {
 		timeout: 30000,
@@ -140,10 +145,14 @@ before(async () => {
 
 after(async () => {
 	try {
-		await browser?.close();
-		await new Promise((resolve) => server?.close(resolve) ?? resolve());
+		try {
+			await browser?.close();
+		} finally {
+			await new Promise((resolve) => server?.close(resolve) ?? resolve());
+		}
 	} finally {
 		if (work) rmSync(work, { recursive: true, force: true });
+		if (ownedDiagnostics) rmSync(ownedDiagnostics, { recursive: true, force: true });
 	}
 });
 

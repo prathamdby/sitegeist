@@ -128,8 +128,11 @@ before(async () => {
 
 after(async () => {
 	try {
-		await context?.close();
-		await new Promise((resolve) => server?.close(resolve) ?? resolve());
+		try {
+			await context?.close();
+		} finally {
+			await new Promise((resolve) => server?.close(resolve) ?? resolve());
+		}
 	} finally {
 		if (directory) rmSync(directory, { recursive: true, force: true });
 	}

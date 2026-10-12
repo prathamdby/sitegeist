@@ -16,6 +16,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const renders = process.env.ARTIFACT_RENDER_DIRECTORY;
 let work;
 let measurementsPath;
+let ownedMeasurements;
 
 function ownedDirectory(prefix) {
 	const directory = mkdtempSync(join(tmpdir(), prefix));
@@ -33,7 +34,10 @@ before(async () => {
 	work = ownedDirectory("sitegeist-artifacts-ui-");
 	if (process.env.ARTIFACT_MEASUREMENTS_PATH) measurementsPath = process.env.ARTIFACT_MEASUREMENTS_PATH;
 	else if (renders) measurementsPath = join(renders, "artifact-measurements.json");
-	else measurementsPath = join(ownedDirectory("sitegeist-artifact-measurements-"), "artifact-measurements.json");
+	else {
+		ownedMeasurements = ownedDirectory("sitegeist-artifact-measurements-");
+		measurementsPath = join(ownedMeasurements, "artifact-measurements.json");
+	}
 	if (renders) mkdirSync(renders, { recursive: true });
 	mkdirSync(dirname(measurementsPath), { recursive: true });
 	execFileSync(`${root}node_modules/.bin/tailwindcss`, ["-i", `${root}src/app.css`, "-o", join(work, "app.css")]);
@@ -83,11 +87,15 @@ before(async () => {
 
 after(async () => {
 	try {
-		if (measurementsPath) writeFileSync(measurementsPath, JSON.stringify(measurements, null, 2));
-		await browser?.close();
-		await new Promise((resolve) => server?.close(resolve) ?? resolve());
+		try {
+			if (measurementsPath) writeFileSync(measurementsPath, JSON.stringify(measurements, null, 2));
+			await browser?.close();
+		} finally {
+			await new Promise((resolve) => server?.close(resolve) ?? resolve());
+		}
 	} finally {
 		if (work) rmSync(work, { recursive: true, force: true });
+		if (ownedMeasurements) rmSync(ownedMeasurements, { recursive: true, force: true });
 	}
 });
 
