@@ -229,7 +229,6 @@ export async function ensureSessionScope(
 			}
 		} catch (err) {
 			console.warn("[Sidepanel] Failed to acquire tab scope:", err);
-			setCurrentScope({ sessionId, tabIds: new Set([worker.id]), groupId, boundTabId, actingTabId: worker.id });
 		}
 		void updateGroupTitle();
 		if (options.focusNewWorker && (await isFocusSessionTabEnabled())) {

@@ -232,6 +232,7 @@ test("a mirror follows the owner's run live and forwards user actions", async (t
 		seen.push(event.type);
 	});
 
+	mirror.setProof(ownerChannel.proof);
 	await until(() => snapshots === 1, "initial snapshot");
 	assert.deepEqual(
 		mirror.agent.state.messages.filter((m) => m.role !== "system").map((m) => m.content),
