@@ -7,6 +7,7 @@
  */
 
 import type { ImageContent } from "@earendil-works/pi-ai";
+import { takePendingSession } from "../browser/group-open.js";
 import { getAttachedSession, sessionChannelName, sessionOwnerLockName } from "../browser/session-panels.js";
 import { getCurrentScope, isTabScopeEnabled } from "../browser/session-tabs.js";
 import { createWelcomeMessage } from "../messages/WelcomeMessage.js";
@@ -281,22 +282,25 @@ async function showWelcome(): Promise<void> {
 export async function adoptStartupSession(): Promise<boolean> {
 	const urlParams = new URLSearchParams(window.location.search);
 	let sessionIdFromUrl = urlParams.get("session");
-	if (!sessionIdFromUrl) {
-		const stashed = (await chrome.storage.session.get("tabGroup.pendingSession").catch(() => ({}))) as Record<
-			string,
-			unknown
-		>;
-		const pending = stashed["tabGroup.pendingSession"];
-		if (typeof pending === "string" && pending.length > 0) {
-			sessionIdFromUrl = pending;
-			await chrome.storage.session.remove("tabGroup.pendingSession").catch(() => {});
-		}
-	}
 	const explicitSession = sessionIdFromUrl !== null;
 	const isNewSession = urlParams.get("new") === "true";
 	const scopeOn = await isTabScopeEnabled();
 	const host = sessionPanel();
 	const tabId = host.getTabId();
+	if (!sessionIdFromUrl && tabId !== undefined) {
+		const stashed = (await chrome.storage.session.get("tabGroup.pendingSession").catch(() => ({}))) as Record<
+			string,
+			unknown
+		>;
+		const pending = takePendingSession(
+			stashed["tabGroup.pendingSession"] as { sessionId?: string; tabId?: number } | undefined,
+			tabId,
+		);
+		if (pending) {
+			sessionIdFromUrl = pending;
+			await chrome.storage.session.remove("tabGroup.pendingSession").catch(() => {});
+		}
+	}
 	if (scopeOn && tabId !== undefined) {
 		noteGroupPanel(await getAttachedSession(tabId));
 	}

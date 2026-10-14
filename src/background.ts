@@ -57,6 +57,7 @@ const TAB_SCOPES_KEY = "tab_scopes"; // sessionId -> TabScopeRecord (M2/M4)
 // Gets populated on startup and updated by port events
 let openSidepanels = new Set<number>();
 let scopeWriteTail: Promise<void> = Promise.resolve();
+const pendingWindowMarks: Promise<void>[] = [];
 const mirrorProofs = new Map<string, string>();
 
 function enqueueScopeWrite<T>(fn: () => Promise<T>): Promise<T> {
@@ -102,15 +103,17 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 			chrome.storage.session.set({ [SIDEPANEL_OPEN_KEY]: Array.from(openWindows) });
 		} else if (tabBoundPort) {
 			// Resolve the tab's window so toggle/lock heuristics keep working.
-			chrome.tabs.get(tabBoundPort.tabId).then(
+			const mark = chrome.tabs.get(tabBoundPort.tabId).then(
 				(tab) => {
 					if (tab.windowId !== undefined) {
+						openSidepanels.add(tab.windowId);
 						openWindows.add(tab.windowId);
 						chrome.storage.session.set({ [SIDEPANEL_OPEN_KEY]: Array.from(openWindows) });
 					}
 				},
 				() => {},
 			);
+			pendingWindowMarks.push(mark);
 		}
 	});
 
@@ -141,6 +144,10 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 							.get(record.boundTabId)
 							.then(() => true)
 							.catch(() => false));
+					await Promise.all(pendingWindowMarks);
+					const openData = await chrome.storage.session.get(SIDEPANEL_OPEN_KEY);
+					const storedOpen = new Set<number>((openData[SIDEPANEL_OPEN_KEY] as number[]) || []);
+					for (const id of openSidepanels) storedOpen.add(id);
 					const lockWindowId = sessionLocks[sessionId];
 					if (
 						!mayGrantTabBoundLock({
@@ -149,7 +156,7 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 							boundTabId: record?.boundTabId,
 							ownerAlive,
 							lockWindowId,
-							lockWindowOpen: lockWindowId !== undefined && openSidepanels.has(lockWindowId),
+							lockWindowOpen: lockWindowId !== undefined && storedOpen.has(lockWindowId),
 						})
 					) {
 						const denied: LockResultMessage = { type: "lockResult", sessionId, success: false };

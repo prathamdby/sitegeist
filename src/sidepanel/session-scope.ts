@@ -475,7 +475,9 @@ function installActivatedListener(): void {
 				return;
 			}
 			if (decision.action === "adopt") {
-				await chrome.storage.session.set({ "tabGroup.pendingSession": decision.sessionId }).catch(() => {});
+				await chrome.storage.session
+					.set({ "tabGroup.pendingSession": { sessionId: decision.sessionId, tabId: activeInfo.tabId } })
+					.catch(() => {});
 				await chrome.sidePanel
 					.setOptions({
 						tabId: activeInfo.tabId,

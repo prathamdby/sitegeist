@@ -8,6 +8,16 @@ export type GroupClick =
  * Same-session and tool-driven clicks are ignored. A streaming panel ignores
  * the click. A live owner is revealed. A dead owner is adopted.
  */
+/** Consume a stashed adopt only for the tab that wrote it. */
+export function takePendingSession(
+	pending: { sessionId?: string; tabId?: number } | string | undefined,
+	panelTabId: number | undefined,
+): string | undefined {
+	if (typeof pending === "string" || !pending?.sessionId || pending.tabId === undefined) return undefined;
+	if (panelTabId !== pending.tabId) return undefined;
+	return pending.sessionId;
+}
+
 export function resolveGroupClick(input: {
 	toolNavigating: boolean;
 	clickedSessionId?: string;
