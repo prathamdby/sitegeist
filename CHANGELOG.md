@@ -30,6 +30,7 @@
 - Mirror proof is issued only to the bound tab, and a panel only receives scope records for sessions it owns.
 - A denied tab-scope acquire removes the worker tab it just created instead of leaving the group behind.
 - A tab-bound panel marks its window open before a lock grant, and a stashed session loads only in the tab that wrote it.
+- Mirror proofs survive service-worker sleep, and tab-group assignment writes go through one background queue.
 - A session with no tab group acts on its recorded worker tab instead of throwing, and claiming a session lock no longer releases another tab's scope.
 - Bound REPL Stop messages and overlay cleanup to their originating tab and execution, rejecting stale or forged requests.
 - Quoted native-input selectors in debugger error expressions and reported missing browser-script results as execution failures.

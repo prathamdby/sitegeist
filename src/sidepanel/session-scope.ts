@@ -74,33 +74,13 @@ async function readAssignedGroupId(sessionId: string): Promise<number | undefine
 }
 
 async function clearAssignment(sessionId: string): Promise<void> {
-	try {
-		const stored = await chrome.storage.session.get(TAB_GROUPS_KEY);
-		const assignments = ((stored[TAB_GROUPS_KEY] as Record<string, TabGroupAssignment>) || {}) as Record<
-			string,
-			TabGroupAssignment
-		>;
-		if (assignments[sessionId] !== undefined) {
-			delete assignments[sessionId];
-			await chrome.storage.session.set({ [TAB_GROUPS_KEY]: assignments });
-		}
-	} catch {
-		// Best effort.
-	}
+	await port.sendMessage({ type: "updateTabGroup", sessionId }).catch(() => {});
 }
 
 async function saveAssignment(sessionId: string, groupId: number): Promise<void> {
-	try {
-		const stored = await chrome.storage.session.get(TAB_GROUPS_KEY);
-		const assignments = ((stored[TAB_GROUPS_KEY] as Record<string, TabGroupAssignment>) || {}) as Record<
-			string,
-			TabGroupAssignment
-		>;
-		assignments[sessionId] = { groupId };
-		await chrome.storage.session.set({ [TAB_GROUPS_KEY]: assignments });
-	} catch (err) {
+	await port.sendMessage({ type: "updateTabGroup", sessionId, groupId }).catch((err: unknown) => {
 		console.warn("[Sidepanel] Failed to save tab group assignment:", err);
-	}
+	});
 }
 
 /** The group is the session's visible handle in the tab strip: name it after the chat. */

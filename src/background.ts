@@ -59,6 +59,7 @@ let openSidepanels = new Set<number>();
 let scopeWriteTail: Promise<void> = Promise.resolve();
 const pendingWindowMarks: Promise<void>[] = [];
 const mirrorProofs = new Map<string, string>();
+const MIRROR_PROOFS_KEY = "mirror_proofs";
 
 function enqueueScopeWrite<T>(fn: () => Promise<T>): Promise<T> {
 	const run = scopeWriteTail.then(fn, fn);
@@ -242,6 +243,8 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 			void registerMirrorProof(port, msg, tabBoundPort?.tabId);
 		} else if (msg.type === "getMirrorProof") {
 			void sendMirrorProof(port, msg, tabBoundPort?.tabId);
+		} else if (msg.type === "updateTabGroup") {
+			void enqueueScopeWrite(() => updateTabGroup(port, msg));
 		} else if (msg.type === "getTabScopes") {
 			void (async () => {
 				const scopes = await readScopes();
@@ -282,7 +285,13 @@ async function registerMirrorProof(
 ): Promise<void> {
 	const record = (await readScopes())[msg.sessionId];
 	const success = record !== undefined && callerTabId === record.boundTabId && msg.proof.length > 0;
-	if (success) mirrorProofs.set(msg.sessionId, msg.proof);
+	if (success) {
+		mirrorProofs.set(msg.sessionId, msg.proof);
+		const stored = await chrome.storage.session.get(MIRROR_PROOFS_KEY);
+		const proofs = ((stored[MIRROR_PROOFS_KEY] as Record<string, string>) || {}) as Record<string, string>;
+		proofs[msg.sessionId] = msg.proof;
+		await chrome.storage.session.set({ [MIRROR_PROOFS_KEY]: proofs });
+	}
 	port.postMessage({ type: "mirrorProofRegistered", sessionId: msg.sessionId, success });
 }
 
@@ -293,8 +302,31 @@ async function sendMirrorProof(
 ): Promise<void> {
 	const record = (await readScopes())[msg.sessionId];
 	const allowed = record !== undefined && callerTabId === record.boundTabId;
-	const proof = allowed ? mirrorProofs.get(msg.sessionId) : undefined;
+	let proof = allowed ? mirrorProofs.get(msg.sessionId) : undefined;
+	if (allowed && proof === undefined) {
+		const stored = await chrome.storage.session.get(MIRROR_PROOFS_KEY);
+		const saved = (stored[MIRROR_PROOFS_KEY] as Record<string, string> | undefined)?.[msg.sessionId];
+		if (saved) {
+			proof = saved;
+			mirrorProofs.set(msg.sessionId, saved);
+		}
+	}
 	port.postMessage({ type: "mirrorProof", sessionId: msg.sessionId, ...(proof !== undefined ? { proof } : {}) });
+}
+
+async function updateTabGroup(
+	port: chrome.runtime.Port,
+	msg: Extract<SidepanelToBackgroundMessage, { type: "updateTabGroup" }>,
+): Promise<void> {
+	const data = await chrome.storage.session.get(TAB_GROUPS_KEY);
+	const assignments = ((data[TAB_GROUPS_KEY] as Record<string, { groupId: number }>) || {}) as Record<
+		string,
+		{ groupId: number }
+	>;
+	if (msg.groupId === undefined) delete assignments[msg.sessionId];
+	else assignments[msg.sessionId] = { groupId: msg.groupId };
+	await chrome.storage.session.set({ [TAB_GROUPS_KEY]: assignments });
+	port.postMessage({ type: "tabGroupUpdated", sessionId: msg.sessionId, success: true });
 }
 
 async function readScopes(): Promise<Record<string, TabScopeRecord>> {

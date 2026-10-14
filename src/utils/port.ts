@@ -107,6 +107,18 @@ export interface GetMirrorProofMessage {
 	sessionId: string;
 }
 
+export interface UpdateTabGroupMessage {
+	type: "updateTabGroup";
+	sessionId: string;
+	groupId?: number;
+}
+
+export interface TabGroupUpdatedMessage {
+	type: "tabGroupUpdated";
+	sessionId: string;
+	success: boolean;
+}
+
 export interface MirrorProofMessage {
 	type: "mirrorProof";
 	sessionId: string;
@@ -151,7 +163,8 @@ export type MessagePair =
 	| { request: ReleaseTabScopeMessage; response: TabScopeReleasedMessage }
 	| { request: GetTabScopesMessage; response: TabScopesMessage }
 	| { request: RegisterMirrorProofMessage; response: MirrorProofRegisteredMessage }
-	| { request: GetMirrorProofMessage; response: MirrorProofMessage };
+	| { request: GetMirrorProofMessage; response: MirrorProofMessage }
+	| { request: UpdateTabGroupMessage; response: TabGroupUpdatedMessage };
 
 /**
  * All messages that can be sent from sidepanel to background.
@@ -187,6 +200,7 @@ export const REQUEST_TO_RESPONSE_TYPE: Record<
 	getTabScopes: "tabScopes",
 	registerMirrorProof: "mirrorProofRegistered",
 	getMirrorProof: "mirrorProof",
+	updateTabGroup: "tabGroupUpdated",
 };
 
 // ============================================================================
