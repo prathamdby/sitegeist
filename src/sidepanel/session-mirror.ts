@@ -281,6 +281,17 @@ async function showWelcome(): Promise<void> {
 export async function adoptStartupSession(): Promise<boolean> {
 	const urlParams = new URLSearchParams(window.location.search);
 	let sessionIdFromUrl = urlParams.get("session");
+	if (!sessionIdFromUrl) {
+		const stashed = (await chrome.storage.session.get("tabGroup.pendingSession").catch(() => ({}))) as Record<
+			string,
+			unknown
+		>;
+		const pending = stashed["tabGroup.pendingSession"];
+		if (typeof pending === "string" && pending.length > 0) {
+			sessionIdFromUrl = pending;
+			await chrome.storage.session.remove("tabGroup.pendingSession").catch(() => {});
+		}
+	}
 	const explicitSession = sessionIdFromUrl !== null;
 	const isNewSession = urlParams.get("new") === "true";
 	const scopeOn = await isTabScopeEnabled();

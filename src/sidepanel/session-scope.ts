@@ -6,7 +6,8 @@
  * in its group. The bound panel tab is never the work tab.
  */
 
-import { attachPanelToTab, isFocusSessionTabEnabled } from "../browser/session-panels.js";
+import { resolveGroupClick } from "../browser/group-open.js";
+import { attachPanelToTab, isFocusSessionTabEnabled, sessionForGroup } from "../browser/session-panels.js";
 import {
 	chooseActingTabId,
 	clearCurrentScope,
@@ -433,6 +434,49 @@ function installActivatedListener(): void {
 		// Showing a session on its group tabs needs no handling here: every
 		// group tab carries its own registered panel for the session.
 		if (host.isMirror()) return;
+
+		if (await isTabScopeEnabled()) {
+			const tab = await chrome.tabs.get(activeInfo.tabId).catch(() => undefined);
+			const stored = (await chrome.storage.session.get([TAB_GROUPS_KEY, "tab_scopes"]).catch(() => ({}))) as Record<
+				string,
+				unknown
+			>;
+			const assignments = (stored[TAB_GROUPS_KEY] as Record<string, { groupId: number }>) || {};
+			const scopes = (stored.tab_scopes as Record<string, { boundTabId: number }>) || {};
+			const clickedSessionId = sessionForGroup(assignments, tab?.groupId);
+			const currentSessionId = host.getSessionId();
+			const owner = clickedSessionId ? scopes[clickedSessionId] : undefined;
+			const ownerAlive =
+				owner !== undefined &&
+				(await chrome.tabs
+					.get(owner.boundTabId)
+					.then(() => true)
+					.catch(() => false));
+			const decision = resolveGroupClick({
+				toolNavigating: isToolNavigating(),
+				clickedSessionId,
+				currentSessionId,
+				ownerAlive,
+				boundTabId: owner?.boundTabId,
+				streaming: host.getAgent()?.state.isStreaming === true,
+			});
+			if (decision.action === "reveal") {
+				await chrome.sidePanel.open({ tabId: decision.boundTabId }).catch(() => {});
+				return;
+			}
+			if (decision.action === "adopt") {
+				await chrome.storage.session.set({ "tabGroup.pendingSession": decision.sessionId }).catch(() => {});
+				await chrome.sidePanel
+					.setOptions({
+						tabId: activeInfo.tabId,
+						path: `sidepanel.html?session=${encodeURIComponent(decision.sessionId)}&tabId=${activeInfo.tabId}`,
+						enabled: true,
+					})
+					.catch(() => {});
+				await chrome.sidePanel.open({ tabId: activeInfo.tabId }).catch(() => {});
+				return;
+			}
+		}
 
 		// Tab scope: track the acting tab inside the group, ignore foreign tabs.
 		if (await isTabScopeEnabled()) {

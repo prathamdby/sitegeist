@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MirrorAgent, reduceMirrorEvent } from "../src/pi/mirror-agent.ts";
+import { hasMirrorProof, MirrorAgent, reduceMirrorEvent } from "../src/pi/mirror-agent.ts";
 
 const model = {
 	id: "m",
@@ -14,6 +14,15 @@ const model = {
 	contextWindow: 1000,
 	maxTokens: 100,
 };
+
+test("hasMirrorProof rejects a missing, empty, or foreign proof", () => {
+	assert.equal(hasMirrorProof({ kind: "hello" }, "secret"), true);
+	assert.equal(hasMirrorProof({ kind: "abort", proof: "secret" }, "secret"), true);
+	assert.equal(hasMirrorProof({ kind: "abort" }, "secret"), false);
+	assert.equal(hasMirrorProof({ kind: "steer", proof: "" }, "secret"), false);
+	assert.equal(hasMirrorProof({ kind: "prompt", proof: "other" }, "secret"), false);
+	assert.equal(hasMirrorProof({ kind: "title", proof: "secret" }, ""), false);
+});
 
 const assistant = (text, extra = {}) => ({
 	role: "assistant",

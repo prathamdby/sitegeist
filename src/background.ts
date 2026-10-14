@@ -236,13 +236,17 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 		} else if (msg.type === "getMirrorProof") {
 			void sendMirrorProof(port, msg, tabBoundPort?.tabId);
 		} else if (msg.type === "getTabScopes") {
-			chrome.storage.session.get(TAB_SCOPES_KEY, (data) => {
-				const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
-					string,
-					TabScopeRecord
-				>;
-				port.postMessage({ type: "tabScopes", scopes });
-			});
+			void (async () => {
+				const scopes = await readScopes();
+				const visible: Record<string, TabScopeRecord> = {};
+				for (const [sessionId, record] of Object.entries(scopes)) {
+					visible[sessionId] =
+						tabBoundPort?.tabId === record.boundTabId
+							? record
+							: { sessionId, boundTabId: -1, actingTabId: -1, windowId: -1 };
+				}
+				port.postMessage({ type: "tabScopes", scopes: visible });
+			})();
 		}
 	});
 
@@ -267,20 +271,6 @@ chrome.windows.onRemoved.addListener((windowId: number) => {
 // TAB-SCOPE LIFECYCLE (M4)
 // ============================================================================
 
-async function callerIsSessionTab(sessionId: string, callerTabId: number | undefined): Promise<boolean> {
-	if (callerTabId === undefined) return false;
-	const record = (await readScopes())[sessionId];
-	if (!record) return false;
-	if (record.boundTabId === callerTabId) return true;
-	if (record.groupId === undefined) return false;
-	try {
-		const tab = await chrome.tabs.get(callerTabId);
-		return tab.groupId === record.groupId;
-	} catch {
-		return false;
-	}
-}
-
 async function registerMirrorProof(
 	port: chrome.runtime.Port,
 	msg: Extract<SidepanelToBackgroundMessage, { type: "registerMirrorProof" }>,
@@ -297,7 +287,8 @@ async function sendMirrorProof(
 	msg: Extract<SidepanelToBackgroundMessage, { type: "getMirrorProof" }>,
 	callerTabId: number | undefined,
 ): Promise<void> {
-	const allowed = await callerIsSessionTab(msg.sessionId, callerTabId);
+	const record = (await readScopes())[msg.sessionId];
+	const allowed = record !== undefined && callerTabId === record.boundTabId;
 	const proof = allowed ? mirrorProofs.get(msg.sessionId) : undefined;
 	port.postMessage({ type: "mirrorProof", sessionId: msg.sessionId, ...(proof !== undefined ? { proof } : {}) });
 }

@@ -25,6 +25,7 @@ switch (selection) {
 			"artifact-preview-contract.test.mjs",
 			"debug-repl-contract.test.mjs",
 			"tab-scope-contract.test.mjs",
+			"tab-group-open-contract.test.mjs",
 			"retry-contract.test.mjs",
 			"mirror-contract.test.mjs",
 			"session-panels-contract.test.mjs",
