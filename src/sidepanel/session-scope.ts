@@ -120,6 +120,11 @@ export async function updateGroupTitle(): Promise<void> {
  * The bound panel tab is never grouped and never acted on. Never throws:
  * failures leave the caller on legacy window-scoped behavior.
  */
+async function discardSpawnedWorker(workerId: number, sessionId: string): Promise<void> {
+	await clearAssignment(sessionId);
+	await chrome.tabs.remove(workerId).catch(() => {});
+}
+
 export async function ensureSessionScope(
 	sessionId: string,
 	boundTabId: number,
@@ -211,7 +216,10 @@ export async function ensureSessionScope(
 				...(groupId !== undefined ? { groupId } : {}),
 			};
 			const acquired = await port.sendMessage(request);
-			if (!acquired.success) return;
+			if (!acquired.success) {
+				await discardSpawnedWorker(worker.id, sessionId);
+				return;
+			}
 			const tabIds = new Set<number>([worker.id]);
 			for (const id of acquired.tabIds) {
 				if (id !== boundTabId) tabIds.add(id);
@@ -230,6 +238,8 @@ export async function ensureSessionScope(
 			}
 		} catch (err) {
 			console.warn("[Sidepanel] Failed to acquire tab scope:", err);
+			await discardSpawnedWorker(worker.id, sessionId);
+			return;
 		}
 		void updateGroupTitle();
 		if (options.focusNewWorker && (await isFocusSessionTabEnabled())) {

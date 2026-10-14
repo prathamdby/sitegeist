@@ -240,10 +240,7 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 				const scopes = await readScopes();
 				const visible: Record<string, TabScopeRecord> = {};
 				for (const [sessionId, record] of Object.entries(scopes)) {
-					visible[sessionId] =
-						tabBoundPort?.tabId === record.boundTabId
-							? record
-							: { sessionId, boundTabId: -1, actingTabId: -1, windowId: -1 };
+					if (tabBoundPort?.tabId === record.boundTabId) visible[sessionId] = record;
 				}
 				port.postMessage({ type: "tabScopes", scopes: visible });
 			})();
