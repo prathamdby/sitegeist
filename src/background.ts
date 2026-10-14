@@ -4,7 +4,13 @@ import {
 	GROUP_PANEL_KEY_PREFIX,
 	sessionForGroup,
 } from "./browser/session-panels.js";
-import { TAB_GROUPS_KEY, TAB_SCOPE_FLAG_KEY } from "./browser/session-tabs.js";
+import {
+	mayAcquireTabScope,
+	mayReleaseTabScope,
+	mayUpdateActingTab,
+	TAB_GROUPS_KEY,
+	TAB_SCOPE_FLAG_KEY,
+} from "./browser/session-tabs.js";
 import { relayOverlayAbortMessage } from "./tools/repl/overlay-abort.js";
 import type {
 	LockedSessionsMessage,
@@ -180,89 +186,11 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 				port.postMessage(response);
 			});
 		} else if (msg.type === "acquireTabScope") {
-			const { sessionId, tabId, windowId: reqWindowId, groupId: reqGroupId, actingTabId: reqActingTabId } = msg;
-			void (async () => {
-				// Verify the bound tab still exists before granting.
-				let tab: chrome.tabs.Tab;
-				try {
-					tab = await chrome.tabs.get(tabId);
-				} catch {
-					port.postMessage({ type: "tabScopeAcquired", sessionId, success: false, tabIds: [] });
-					return;
-				}
-				const data = await chrome.storage.session.get(TAB_SCOPES_KEY);
-				const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
-					string,
-					TabScopeRecord
-				>;
-				const existing = scopes[sessionId];
-				// Verify a requested group still exists; otherwise drop it and
-				// fall back to the previously recorded group when still valid.
-				let groupId = reqGroupId ?? existing?.groupId;
-				if (groupId !== undefined) {
-					try {
-						await chrome.tabGroups.get(groupId);
-					} catch {
-						groupId = undefined;
-					}
-				}
-				scopes[sessionId] = {
-					sessionId,
-					boundTabId: tabId,
-					actingTabId: reqActingTabId ?? existing?.actingTabId ?? tabId,
-					windowId: tab.windowId ?? reqWindowId,
-					...(groupId !== undefined ? { groupId } : {}),
-				};
-				await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
-				let tabIds = [tabId];
-				if (groupId !== undefined) {
-					try {
-						const grouped = await chrome.tabs.query({ groupId });
-						const ids = grouped.map((t) => t.id).filter((id): id is number => id !== undefined);
-						if (ids.length > 0) tabIds = ids;
-					} catch {
-						// Fall through with the bound tab only.
-					}
-				}
-				port.postMessage({ type: "tabScopeAcquired", sessionId, success: true, groupId, tabIds });
-				// Best-effort: pin the panel to the owning tab. Never throws.
-				void setPanelForTab(tabId, true);
-			})();
+			void handleAcquireTabScope(port, msg, tabBoundPort?.tabId);
 		} else if (msg.type === "updateActingTab") {
-			const { sessionId, tabId } = msg;
-			void (async () => {
-				try {
-					await chrome.tabs.get(tabId);
-				} catch {
-					port.postMessage({ type: "actingTabUpdated", sessionId, success: false });
-					return;
-				}
-				const data = await chrome.storage.session.get(TAB_SCOPES_KEY);
-				const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
-					string,
-					TabScopeRecord
-				>;
-				const existing = scopes[sessionId];
-				if (!existing) {
-					port.postMessage({ type: "actingTabUpdated", sessionId, success: false });
-					return;
-				}
-				existing.actingTabId = tabId;
-				await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
-				port.postMessage({ type: "actingTabUpdated", sessionId, success: true });
-			})();
+			void handleUpdateActingTab(port, msg);
 		} else if (msg.type === "releaseTabScope") {
-			const { sessionId } = msg;
-			void (async () => {
-				const data = await chrome.storage.session.get(TAB_SCOPES_KEY);
-				const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
-					string,
-					TabScopeRecord
-				>;
-				delete scopes[sessionId];
-				await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
-				port.postMessage({ type: "tabScopeReleased", sessionId });
-			})();
+			void handleReleaseTabScope(port, msg, tabBoundPort?.tabId);
 		} else if (msg.type === "getTabScopes") {
 			chrome.storage.session.get(TAB_SCOPES_KEY, (data) => {
 				const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
@@ -298,6 +226,127 @@ chrome.windows.onRemoved.addListener((windowId: number) => {
 async function readScopes(): Promise<Record<string, TabScopeRecord>> {
 	const data = await chrome.storage.session.get(TAB_SCOPES_KEY);
 	return ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<string, TabScopeRecord>;
+}
+
+async function tabStillExists(tabId: number): Promise<boolean> {
+	try {
+		await chrome.tabs.get(tabId);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function denyTabScope(port: chrome.runtime.Port, sessionId: string): void {
+	port.postMessage({ type: "tabScopeAcquired", sessionId, success: false, tabIds: [] });
+}
+
+/**
+ * Bind the session to the port's tab. A live foreign owner is left in place.
+ * A legacy window port cannot steal that owner; a dead owner is overwritten.
+ */
+async function handleAcquireTabScope(
+	port: chrome.runtime.Port,
+	msg: Extract<SidepanelToBackgroundMessage, { type: "acquireTabScope" }>,
+	callerTabId: number | undefined,
+): Promise<void> {
+	const { sessionId, tabId, windowId: reqWindowId, groupId: reqGroupId, actingTabId: reqActingTabId } = msg;
+	const scopes = await readScopes();
+	const existing = scopes[sessionId];
+	const ownerAlive = existing !== undefined && (await tabStillExists(existing.boundTabId));
+	if (!mayAcquireTabScope(callerTabId, tabId, existing?.boundTabId, ownerAlive)) {
+		denyTabScope(port, sessionId);
+		return;
+	}
+	const boundTabId = callerTabId ?? tabId;
+	let tab: chrome.tabs.Tab;
+	try {
+		tab = await chrome.tabs.get(boundTabId);
+	} catch {
+		denyTabScope(port, sessionId);
+		return;
+	}
+	let groupId = reqGroupId ?? existing?.groupId;
+	if (groupId !== undefined) {
+		try {
+			await chrome.tabGroups.get(groupId);
+		} catch {
+			groupId = undefined;
+		}
+	}
+	scopes[sessionId] = {
+		sessionId,
+		boundTabId,
+		actingTabId: reqActingTabId ?? existing?.actingTabId ?? boundTabId,
+		windowId: tab.windowId ?? reqWindowId,
+		...(groupId !== undefined ? { groupId } : {}),
+	};
+	await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
+	let tabIds = [boundTabId];
+	if (groupId !== undefined) {
+		try {
+			const grouped = await chrome.tabs.query({ groupId });
+			const ids = grouped.map((t) => t.id).filter((id): id is number => id !== undefined);
+			if (ids.length > 0) tabIds = ids;
+		} catch {
+			// Fall through with the bound tab only.
+		}
+	}
+	port.postMessage({ type: "tabScopeAcquired", sessionId, success: true, groupId, tabIds });
+	void setPanelForTab(boundTabId, true);
+}
+
+/** Move the acting tab only inside the recorded group, or not at all. */
+async function handleUpdateActingTab(
+	port: chrome.runtime.Port,
+	msg: Extract<SidepanelToBackgroundMessage, { type: "updateActingTab" }>,
+): Promise<void> {
+	const { sessionId, tabId } = msg;
+	const fail = () => {
+		port.postMessage({ type: "actingTabUpdated", sessionId, success: false });
+	};
+	const scopes = await readScopes();
+	const existing = scopes[sessionId];
+	if (!existing) {
+		fail();
+		return;
+	}
+	let tab: chrome.tabs.Tab;
+	try {
+		tab = await chrome.tabs.get(tabId);
+	} catch {
+		fail();
+		return;
+	}
+	if (!mayUpdateActingTab(existing, tab)) {
+		fail();
+		return;
+	}
+	existing.actingTabId = tabId;
+	await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
+	port.postMessage({ type: "actingTabUpdated", sessionId, success: true });
+}
+
+/**
+ * Delete only for the owning tab, or for a legacy port whose bound tab is
+ * already gone. A different tab cannot drop the record; it reclaims through
+ * acquire once the owner is dead. The reply is unconditional so the port
+ * client does not time out; a refusal leaves the record in place.
+ */
+async function handleReleaseTabScope(
+	port: chrome.runtime.Port,
+	msg: Extract<SidepanelToBackgroundMessage, { type: "releaseTabScope" }>,
+	callerTabId: number | undefined,
+): Promise<void> {
+	const { sessionId } = msg;
+	const scopes = await readScopes();
+	const existing = scopes[sessionId];
+	const ownerAlive = existing !== undefined && (await tabStillExists(existing.boundTabId));
+	if (mayReleaseTabScope(callerTabId, existing?.boundTabId, ownerAlive)) {
+		delete scopes[sessionId];
+		await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
+	}
+	port.postMessage({ type: "tabScopeReleased", sessionId });
 }
 
 async function releaseScopesForWindow(windowId: number): Promise<void> {

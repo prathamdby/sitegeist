@@ -539,18 +539,14 @@ export class AskUserWhichElementTool implements AgentTool<typeof selectElementSc
 				throw new Error("Tool execution was aborted");
 			}
 
-			// Get the tab to act on: the session's acting tab when tab scope is
-			// on, otherwise the legacy active tab.
-			let tab: chrome.tabs.Tab | undefined;
-			if (await isTabScopeEnabled()) {
-				tab = await resolveActingTab().catch(() => undefined);
-			}
-			if (!tab) {
-				[tab] = await chrome.tabs.query({
-					active: true,
-					currentWindow: true,
-				});
-			}
+			const tab = (await isTabScopeEnabled())
+				? await resolveActingTab()
+				: (
+						await chrome.tabs.query({
+							active: true,
+							currentWindow: true,
+						})
+					)[0];
 
 			if (!tab || !tab.id) {
 				throw new Error("No active tab found");

@@ -34,3 +34,17 @@ export function isThrottle429(message: string): boolean {
 	}
 	return THROTTLE_429_PATTERN.test(message) || THROTTLE_RATE_LIMIT_PATTERN.test(message);
 }
+
+export interface ThrottleRetryInput {
+	started: boolean;
+	errorMessage?: string;
+	retriesUsed: number;
+	maxRetries: number;
+	aborted: boolean;
+}
+
+/** Retry only a throttle that arrived before the provider started the response. */
+export function shouldRetryThrottle(input: ThrottleRetryInput): boolean {
+	if (input.started || input.aborted || input.retriesUsed >= input.maxRetries) return false;
+	return input.errorMessage !== undefined && isThrottle429(input.errorMessage);
+}

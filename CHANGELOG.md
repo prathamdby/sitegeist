@@ -24,6 +24,7 @@
 
 ### Fixed
 
+- A session with no tab group acts on its recorded worker tab instead of throwing, and claiming a session lock no longer releases another tab's scope.
 - Bound REPL Stop messages and overlay cleanup to their originating tab and execution, rejecting stale or forged requests.
 - Quoted native-input selectors in debugger error expressions and reported missing browser-script results as execution failures.
 - Enforced read-only artifact access from isolated HTML previews and excluded failed artifact operations from session restoration.

@@ -74,18 +74,14 @@ CRITICAL: Use browserjs() and repl tool for DOM manipulation. Use this ONLY for 
 			throw new Error("Debugger command aborted");
 		}
 
-		// Get the tab to act on: the session's acting tab when tab scope is
-		// on, otherwise the legacy active tab.
-		let tab: chrome.tabs.Tab | undefined;
-		if (await isTabScopeEnabled()) {
-			tab = await resolveActingTab().catch(() => undefined);
-		}
-		if (!tab) {
-			[tab] = await chrome.tabs.query({
-				active: true,
-				currentWindow: true,
-			});
-		}
+		const tab = (await isTabScopeEnabled())
+			? await resolveActingTab()
+			: (
+					await chrome.tabs.query({
+						active: true,
+						currentWindow: true,
+					})
+				)[0];
 
 		if (!tab || !tab.id) {
 			throw new Error("No active tab found");

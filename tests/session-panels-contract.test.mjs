@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+	attachPanelToTab,
 	sessionChannelName,
 	sessionForGroup,
 	sessionOwnerLockName,
@@ -106,6 +107,43 @@ function fakeOwnerAgent() {
 	};
 	return agent;
 }
+
+test("attachPanelToTab skips setOptions when the tab is already registered for that session", async (t) => {
+	const setOptions = [];
+	const store = {};
+	const previous = globalThis.chrome;
+	globalThis.chrome = {
+		sidePanel: {
+			async setOptions(options) {
+				setOptions.push(options);
+			},
+		},
+		storage: {
+			session: {
+				async get(key) {
+					return { [key]: store[key] };
+				},
+				async set(items) {
+					Object.assign(store, items);
+				},
+			},
+		},
+	};
+	t.after(() => {
+		globalThis.chrome = previous;
+	});
+
+	await attachPanelToTab(7, "alpha");
+	await attachPanelToTab(7, "alpha");
+	await attachPanelToTab(7, "beta");
+
+	assert.equal(setOptions.length, 2);
+	assert.equal(setOptions[0].tabId, 7);
+	assert.equal(setOptions[0].path, sessionPanelPath("alpha", 7));
+	assert.equal(setOptions[0].enabled, true);
+	assert.equal(setOptions[1].path, sessionPanelPath("beta", 7));
+	assert.equal(store["group_panel:7"], "beta");
+});
 
 test("panel paths, lock and channel names are per session and tab", () => {
 	assert.equal(sessionPanelPath("s 1", 7), "sidepanel.html?session=s%201&tabId=7");

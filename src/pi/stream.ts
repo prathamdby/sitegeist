@@ -7,7 +7,7 @@ import {
 	lazyStream,
 } from "@earendil-works/pi-ai";
 import { streamSimple } from "./models.js";
-import { clampRetryPolicy, DEFAULT_RETRY_POLICY, isThrottle429, type RetryPolicy } from "./retry-policy.js";
+import { clampRetryPolicy, DEFAULT_RETRY_POLICY, type RetryPolicy, shouldRetryThrottle } from "./retry-policy.js";
 
 function createAbortError(): Error {
 	const error = new Error("Request aborted");
@@ -115,11 +115,14 @@ export function createStreamFn(
 					}
 					// Retry-After headers are deliberately ignored: the fixed delayMs alone is the policy.
 					if (
-						started ||
 						failed === undefined ||
-						!isThrottle429(failed.errorMessage ?? "") ||
-						retriesUsed >= policy.maxRetries ||
-						options?.signal?.aborted
+						!shouldRetryThrottle({
+							started,
+							errorMessage: failed.errorMessage,
+							retriesUsed,
+							maxRetries: policy.maxRetries,
+							aborted: options?.signal?.aborted === true,
+						})
 					) {
 						for (const event of buffered) {
 							outer.push(event);

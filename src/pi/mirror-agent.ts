@@ -19,6 +19,8 @@ export interface SessionSnapshot {
 	model: Model<Api>;
 	thinkingLevel: ThinkingLevel;
 	title: string;
+	/** Absent when the owner has no error. Applying a snapshot replaces or clears the mirror's error. */
+	errorMessage?: string;
 }
 
 export type PromptInput = string | AgentMessage | AgentMessage[];
@@ -44,10 +46,15 @@ export interface MirrorState {
 	errorMessage?: string;
 }
 
-/** Apply one owner event to mirrored state, matching the owner's reducer. Pure apart from mutating state. */
-export function reduceMirrorEvent(state: MirrorState, event: AgentEvent): void {
+/**
+ * Apply one owner event to mirrored state, matching the owner's reducer.
+ * Returns false when a duplicate agent_start arrives during an open run: that
+ * resend is not a new run, so callers must not emit it or start another idle wait.
+ */
+export function reduceMirrorEvent(state: MirrorState, event: AgentEvent): boolean {
 	switch (event.type) {
 		case "agent_start":
+			if (state.isStreaming) return false;
 			state.isStreaming = true;
 			state.streamingMessage = undefined;
 			state.errorMessage = undefined;
@@ -83,6 +90,7 @@ export function reduceMirrorEvent(state: MirrorState, event: AgentEvent): void {
 			state.pendingToolCalls = new Set();
 			break;
 	}
+	return true;
 }
 
 /**
@@ -210,30 +218,29 @@ export class MirrorAgent extends Agent {
 	}
 
 	async applyEvent(event: AgentEvent): Promise<void> {
-		if (event.type === "agent_start") {
-			if (this.state.isStreaming) return;
-			this.beginRun();
-		}
-		reduceMirrorEvent(this.mutableState, event);
+		if (!reduceMirrorEvent(this.mutableState, event)) return;
+		if (event.type === "agent_start") this.beginRun();
 		await this.emit(event);
 		if (event.type === "agent_end") this.endRun();
 	}
 
+	/** Streaming transitions go through the reducer; the snapshot then resyncs fields that transition clobbers. */
 	async applySnapshot(snapshot: SessionSnapshot): Promise<void> {
-		const state = this.mutableState;
-		const wasStreaming = state.isStreaming;
-		state.messages = snapshot.messages;
-		state.pendingToolCalls = new Set(snapshot.pendingToolCalls);
-		state.streamingMessage = snapshot.streamingMessage;
+		const wasStreaming = this.state.isStreaming;
 		this.state.model = snapshot.model;
 		this.state.thinkingLevel = snapshot.thinkingLevel;
 		this.title = snapshot.title;
-		if (snapshot.isStreaming && !wasStreaming) {
-			await this.applyEvent({ type: "agent_start" });
-			state.streamingMessage = snapshot.streamingMessage;
-		} else if (!snapshot.isStreaming && wasStreaming) {
-			await this.applyEvent({ type: "agent_end", messages: snapshot.messages });
+		if (snapshot.isStreaming !== wasStreaming) {
+			await this.applyEvent(
+				snapshot.isStreaming ? { type: "agent_start" } : { type: "agent_end", messages: snapshot.messages },
+			);
 		}
+		const state = this.mutableState;
+		state.messages = snapshot.messages;
+		state.isStreaming = snapshot.isStreaming;
+		state.streamingMessage = snapshot.streamingMessage;
+		state.pendingToolCalls = new Set(snapshot.pendingToolCalls);
+		state.errorMessage = snapshot.errorMessage;
 		this.onChange?.();
 	}
 }
@@ -335,6 +342,7 @@ export class SessionOwnerChannel {
 				model: state.model,
 				thinkingLevel: state.thinkingLevel,
 				title: this.handlers.title(),
+				errorMessage: state.errorMessage,
 			},
 		});
 	}

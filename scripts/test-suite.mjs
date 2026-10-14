@@ -26,6 +26,7 @@ switch (selection) {
 			"debug-repl-contract.test.mjs",
 			"tab-scope-contract.test.mjs",
 			"retry-contract.test.mjs",
+			"mirror-contract.test.mjs",
 			"session-panels-contract.test.mjs",
 		];
 		if (suites.some((name) => name.startsWith("sandbox-"))) {

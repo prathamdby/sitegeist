@@ -28,16 +28,11 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 		return {};
 	}
 
-	/**
-	 * Get the tab to act on: the session's acting tab when tab scope is on,
-	 * otherwise the currently active tab ID
-	 */
+	/** Session acting tab when tab scope is on, otherwise the active tab. */
 	private async getActiveTabId(): Promise<number> {
-		if (await isTabScopeEnabled()) {
-			const acting = await resolveActingTab().catch(() => undefined);
-			if (acting?.id !== undefined) return acting.id;
-		}
-		const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+		const tab = (await isTabScopeEnabled())
+			? await resolveActingTab()
+			: (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
 		if (!tab?.id) {
 			throw new Error("No active tab found");
 		}

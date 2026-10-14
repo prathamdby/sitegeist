@@ -16,6 +16,8 @@ export interface TabGroupAssignment {
 
 let testOverride: boolean | undefined;
 let lastKnownEnabled = false;
+let flagWatchInstalled = false;
+let flagEpoch = 0;
 
 /** Test-only override for the flag. Pass undefined to clear. */
 export function setTabScopeEnabledForTests(value: boolean | undefined): void {
@@ -23,11 +25,42 @@ export function setTabScopeEnabledForTests(value: boolean | undefined): void {
 	if (value !== undefined) lastKnownEnabled = value;
 }
 
+/**
+ * Prime the sync mirror from storage and keep it current. One listener for
+ * the process; a later toggle must not leave `isTabScopeEnabledSync` stuck
+ * at the default false.
+ */
+function ensureTabScopeFlagWatcher(): void {
+	if (flagWatchInstalled) return;
+	if (typeof chrome === "undefined" || !chrome.storage?.onChanged || !chrome.storage.local) return;
+	flagWatchInstalled = true;
+	chrome.storage.onChanged.addListener((changes, areaName) => {
+		if (areaName !== "local") return;
+		const change = changes[TAB_SCOPE_FLAG_KEY];
+		if (!change) return;
+		flagEpoch += 1;
+		if (testOverride !== undefined) return;
+		lastKnownEnabled = change.newValue === true;
+	});
+	const epoch = flagEpoch;
+	void chrome.storage.local.get(TAB_SCOPE_FLAG_KEY).then(
+		(stored) => {
+			if (testOverride !== undefined || epoch !== flagEpoch) return;
+			lastKnownEnabled = stored[TAB_SCOPE_FLAG_KEY] === true;
+		},
+		() => {},
+	);
+}
+
 export async function isTabScopeEnabled(): Promise<boolean> {
 	if (testOverride !== undefined) return testOverride;
+	ensureTabScopeFlagWatcher();
 	try {
 		if (typeof chrome === "undefined" || !chrome.storage?.local) return false;
+		const epoch = flagEpoch;
 		const stored = await chrome.storage.local.get(TAB_SCOPE_FLAG_KEY);
+		if (testOverride !== undefined) return testOverride;
+		if (epoch !== flagEpoch) return lastKnownEnabled;
 		lastKnownEnabled = stored[TAB_SCOPE_FLAG_KEY] === true;
 		return lastKnownEnabled;
 	} catch {
@@ -37,12 +70,16 @@ export async function isTabScopeEnabled(): Promise<boolean> {
 
 /**
  * Sync mirror of the flag for renderers and other sync contexts.
- * Reflects the last async resolution or test override; defaults false.
+ * Reflects the last async resolution, the storage listener, or a test override.
+ * Defaults false until the first storage read lands.
  */
 export function isTabScopeEnabledSync(): boolean {
 	if (testOverride !== undefined) return testOverride;
+	ensureTabScopeFlagWatcher();
 	return lastKnownEnabled;
 }
+
+ensureTabScopeFlagWatcher();
 
 export interface TabRef {
 	id?: number;
@@ -72,7 +109,7 @@ export async function getGroupTabIds(groupId: number): Promise<number[]> {
 	const tabs = await chrome.tabs.query({ groupId });
 	const ids: number[] = [];
 	for (const tab of tabs) {
-		if (tab.id !== undefined) ids.push(tab.id);
+		if (tab.id !== undefined && tab.groupId === groupId) ids.push(tab.id);
 	}
 	return ids;
 }
@@ -170,51 +207,89 @@ export function isRestrictedUrl(url: string | undefined): boolean {
 }
 
 /**
- * Resolve the tab the agent should act on. Flag off or no scope means the
- * legacy active tab in the current window. Flag on with scope means the
- * acting tab (falling back to a surviving group sibling, then the bound
- * tab), verified to still exist. Never returns a foreign tab.
+ * Next acting tab id, or undefined when the live group has none.
+ *
+ * The result is always a member of `liveGroupTabIds`. The recorded acting
+ * tab wins when it is live. Otherwise the first live id that is not the
+ * bound panel tab is chosen. The bound panel tab is returned only when it
+ * is itself in the live group and no other member is. Never a foreign id.
+ */
+/**
+ * Ids the acting-tab chooser may see.
+ *
+ * A recorded group uses the group query, including an empty or failed query.
+ * No group uses the recorded tab ids. Those two sets are never mixed.
+ */
+export function actingCandidates(
+	scope: { groupId?: number; tabIds: ReadonlySet<number> | readonly number[] },
+	groupMemberIds: readonly number[] | undefined,
+): number[] {
+	if (scope.groupId !== undefined) return groupMemberIds === undefined ? [] : [...groupMemberIds];
+	return [...scope.tabIds];
+}
+
+export function chooseActingTabId(
+	scope: { actingTabId?: number; boundTabId?: number },
+	liveGroupTabIds: ReadonlySet<number> | readonly number[],
+): number | undefined {
+	const live = liveGroupTabIds instanceof Set ? liveGroupTabIds : new Set(liveGroupTabIds);
+	if (live.size === 0) return undefined;
+	if (scope.actingTabId !== undefined && live.has(scope.actingTabId)) return scope.actingTabId;
+	for (const id of live) {
+		if (id !== scope.boundTabId) return id;
+	}
+	if (scope.boundTabId !== undefined && live.has(scope.boundTabId)) return scope.boundTabId;
+	return undefined;
+}
+
+/**
+ * Tab the agent should act on.
+ *
+ * Flag off, or no current scope: the legacy active tab in the current window.
+ * Flag on with a scope: `actingCandidates` then `chooseActingTabId`. A missing
+ * group uses recorded tab ids that still exist. A present group uses the
+ * group query, and a failed query is empty. Throws when the chooser returns
+ * undefined. Does not query the window's active tab on this branch.
+ * Adopting a sibling records that id, and the candidate ids, on the scope.
  */
 export async function resolveActingTab(): Promise<chrome.tabs.Tab> {
 	if ((await isTabScopeEnabled()) && currentScope) {
-		const preferred = currentScope.actingTabId ?? currentScope.boundTabId;
-		if (preferred !== undefined) {
-			try {
-				const tab = await chrome.tabs.get(preferred);
-				if (tab.id !== undefined) return tab;
-			} catch {
-				// Fall through to the group-sibling lookup below.
-			}
-		}
-		// Preferred tab is gone (e.g. user closed the worker tab): stay
-		// inside the group by adopting a surviving sibling instead of
-		// falling back to the user's tab.
+		let groupMemberIds: number[] | undefined;
 		if (currentScope.groupId !== undefined) {
 			try {
-				const siblingIds = await getGroupTabIds(currentScope.groupId);
-				for (const siblingId of siblingIds) {
-					try {
-						const sibling = await chrome.tabs.get(siblingId);
-						if (sibling.id !== undefined) {
-							currentScope.actingTabId = sibling.id;
-							return sibling;
-						}
-					} catch {
-						// Try the next sibling.
-					}
+				groupMemberIds = await getGroupTabIds(currentScope.groupId);
+			} catch {
+				groupMemberIds = [];
+			}
+		}
+		let candidates = actingCandidates(currentScope, groupMemberIds);
+		if (currentScope.groupId === undefined) {
+			const alive: number[] = [];
+			for (const id of candidates) {
+				try {
+					const tab = await chrome.tabs.get(id);
+					if (tab.id !== undefined) alive.push(tab.id);
+				} catch {
+					// Recorded id is gone.
 				}
-			} catch {
-				// Fall through to the legacy lookup below.
 			}
+			candidates = alive;
 		}
-		if (currentScope.boundTabId !== undefined) {
-			try {
-				const bound = await chrome.tabs.get(currentScope.boundTabId);
-				if (bound.id !== undefined) return bound;
-			} catch {
-				// Fall through to the legacy lookup below.
-			}
+		const chosen = chooseActingTabId(currentScope, candidates);
+		if (chosen === undefined) {
+			throw new Error("No acting tab in the session tab group");
 		}
+		if (chosen !== currentScope.actingTabId) {
+			currentScope.actingTabId = chosen;
+			for (const id of candidates) currentScope.tabIds.add(id);
+		}
+		try {
+			const tab = await chrome.tabs.get(chosen);
+			if (tab.id !== undefined) return tab;
+		} catch {
+			// The chosen id vanished between the group query and the get.
+		}
+		throw new Error("No acting tab in the session tab group");
 	}
 	const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 	if (!tab || tab.id === undefined) {
@@ -227,4 +302,63 @@ export async function resolveActingTab(): Promise<chrome.tabs.Tab> {
 export function getScopedActingTabId(): number | undefined {
 	if (!isTabScopeEnabledSync() || !currentScope) return undefined;
 	return currentScope.actingTabId ?? currentScope.boundTabId;
+}
+
+// ============================================================================
+// SCOPE OWNERSHIP (background applies these; no second store)
+// ============================================================================
+
+/**
+ * Whether this port may write the session's scope record.
+ *
+ * A tab-bound port's tab id is the requester and must equal `requestedTabId`.
+ * A live foreign owner is never overwritten. A dead owner may be replaced.
+ * A legacy window port (no tab id) cannot take a live tab-bound owner, even
+ * if it claims that owner's tab id. `ownerAlive` is ignored when there is
+ * no existing record.
+ */
+export function mayAcquireTabScope(
+	callerTabId: number | undefined,
+	requestedTabId: number,
+	existingBoundTabId: number | undefined,
+	ownerAlive: boolean,
+): boolean {
+	if (callerTabId !== undefined && callerTabId !== requestedTabId) return false;
+	if (existingBoundTabId !== undefined && ownerAlive) {
+		if (callerTabId === undefined) return false;
+		return callerTabId === existingBoundTabId;
+	}
+	return true;
+}
+
+/**
+ * Whether this port may delete the session's scope record.
+ *
+ * The owning tab may always release. A different tab never deletes, even
+ * when the owner is already dead (reclaim goes through acquire). A legacy
+ * window port may delete only when the bound tab is gone.
+ */
+export function mayReleaseTabScope(
+	callerTabId: number | undefined,
+	existingBoundTabId: number | undefined,
+	ownerAlive: boolean,
+): boolean {
+	if (existingBoundTabId === undefined) return false;
+	if (callerTabId !== undefined) return callerTabId === existingBoundTabId;
+	return !ownerAlive;
+}
+
+/**
+ * Whether `tab` may become the session's acting tab.
+ *
+ * With a group, the tab must belong to that group. Without one, only the
+ * recorded acting tab id is accepted: no expansion to an arbitrary tab.
+ */
+export function mayUpdateActingTab(
+	record: { actingTabId: number; groupId?: number },
+	tab: { id?: number; groupId?: number },
+): boolean {
+	if (tab.id === undefined) return false;
+	if (record.groupId !== undefined) return tab.groupId === record.groupId;
+	return tab.id === record.actingTabId;
 }

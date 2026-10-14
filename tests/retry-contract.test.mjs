@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
 import { getModels } from "../src/pi/models.ts";
-import { isThrottle429 } from "../src/pi/retry-policy.ts";
+import { isThrottle429, shouldRetryThrottle } from "../src/pi/retry-policy.ts";
 import { createStreamFn } from "../src/pi/stream.ts";
 
 const model = getModels("opencode-go").find((entry) => entry.id === "claude-haiku-5-5");
@@ -84,6 +84,16 @@ function requestContext() {
 	return { messages: [{ role: "user", content: "Fixture", timestamp: 1 }] };
 }
 
+test("shouldRetryThrottle retries only a pre-start throttle", () => {
+	const open = { started: false, retriesUsed: 0, maxRetries: 3, aborted: false };
+	assert.equal(shouldRetryThrottle({ ...open, errorMessage: "429 rate_limit_error" }), true);
+	assert.equal(shouldRetryThrottle({ ...open, started: true, errorMessage: "429 rate_limit_error" }), false);
+	assert.equal(shouldRetryThrottle({ ...open, errorMessage: "429 GoUsageLimitError: quota exceeded" }), false);
+	assert.equal(shouldRetryThrottle({ ...open, aborted: true, errorMessage: "429 rate_limit_error" }), false);
+	assert.equal(shouldRetryThrottle({ ...open, retriesUsed: 3, errorMessage: "429 rate_limit_error" }), false);
+	assert.equal(shouldRetryThrottle({ ...open }), false);
+});
+
 test("isThrottle429 matches throttles but never quota failures", () => {
 	assert.equal(isThrottle429("429 rate_limit_error"), true);
 	assert.equal(isThrottle429('429 {"type":"error"}'), true);
@@ -148,6 +158,33 @@ test("quota 429s pass through with a single attempt", async () => {
 	const result = await (await stream(model, requestContext(), requestOptions())).result();
 	assert.equal(result.stopReason, "error");
 	assert.match(result.errorMessage ?? "", /GoUsageLimitError/);
+	assert.equal(fetchCalls(), 1);
+});
+
+function startedThenThrottledResponse() {
+	const start = {
+		type: "message_start",
+		message: {
+			id: "fixture-started",
+			role: "assistant",
+			content: [],
+			model: model.id,
+			usage: { input_tokens: 1, output_tokens: 0 },
+		},
+	};
+	const body = `event: ${start.type}\ndata: ${JSON.stringify(start)}\n\nevent: error\ndata: 429 rate_limit_error\n\n`;
+	return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+}
+
+test("a throttle after the stream has started is not retried", async () => {
+	const fetchCalls = stubFetch(async () => startedThenThrottledResponse());
+	const stream = createStreamFn(
+		async () => undefined,
+		async () => ({ maxRetries: 3, delayMs: 1 }),
+	);
+	const result = await (await stream(model, requestContext(), requestOptions())).result();
+	assert.equal(result.stopReason, "error");
+	assert.match(result.errorMessage ?? "", /^429\b/);
 	assert.equal(fetchCalls(), 1);
 });
 

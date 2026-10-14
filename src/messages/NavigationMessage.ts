@@ -1,6 +1,6 @@
 import { html, LitElement, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { getCurrentScope, isTabScopeEnabledSync } from "../browser/session-tabs.js";
+import { createTabInScope, getCurrentScope, isTabScopeEnabled } from "../browser/session-tabs.js";
 import type { MessageRenderer } from "../chat/renderers/index.js";
 import { registerMessageRenderer } from "../chat/renderers/index.js";
 import { SkillPill } from "../components/SkillPill.js";
@@ -66,19 +66,9 @@ export class NavigationMessageElement extends LitElement {
 			<div class="mx-4 my-2 space-y-2">
 				<button
 					class="inline-flex items-center gap-2 px-3 py-2 text-sm text-card-foreground bg-card border border-border rounded-lg hover:bg-accent/50 transition-colors max-w-full cursor-pointer shadow-lg"
-					@click=${() => {
-						// Explicit user click is a gesture: open inactive in-group
-						// when tab scope is on, otherwise legacy active tab.
-						if (isTabScopeEnabledSync()) {
-							const scope = getCurrentScope();
-							void chrome.tabs
-								.create({ url: this.url, active: false })
-								.then((tab) => {
-									if (tab.id !== undefined && scope?.groupId !== undefined) {
-										void chrome.tabs.group({ tabIds: tab.id, groupId: scope.groupId }).catch(() => {});
-									}
-								})
-								.catch(() => {});
+					@click=${async () => {
+						if (await isTabScopeEnabled()) {
+							await createTabInScope(this.url, getCurrentScope()?.groupId).catch(() => {});
 							return;
 						}
 						chrome.tabs.create({ url: this.url });

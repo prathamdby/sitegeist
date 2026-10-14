@@ -2,28 +2,8 @@ import { icon } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
-import type { ImageContent } from "@earendil-works/pi-ai";
 import { html, render } from "lit";
 import { History, Plus, Settings, SquareArrowOutUpRight } from "lucide";
-import {
-	attachPanelToTab,
-	getAttachedSession,
-	isFocusSessionTabEnabled,
-	sessionChannelName,
-	sessionOwnerLockName,
-} from "./browser/session-panels.js";
-import {
-	clearCurrentScope,
-	createTabInScope,
-	ensureGroupForTabs,
-	getCurrentScope,
-	getGroupTabIds,
-	isTabScopeEnabled,
-	resolveActingTab,
-	setActingTab,
-	setCurrentScope,
-	TAB_GROUPS_KEY,
-} from "./browser/session-tabs.js";
 import { ChatPanel } from "./chat/ChatPanel.js";
 import { setShowJsonMode } from "./chat/renderers/index.js";
 import { Toast } from "./components/Toast.js";
@@ -45,7 +25,7 @@ import {
 	registerNavigationRenderer,
 } from "./messages/NavigationMessage.js";
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
-import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
+import { registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
 import { isOAuthCredentials, resolveApiKey } from "./oauth/index.js";
 import {
 	Agent,
@@ -56,7 +36,7 @@ import {
 	executableTool,
 } from "./pi/agent.js";
 import { CostRecorder } from "./pi/costs.js";
-import { MirrorAgent, type PromptInput, SessionMirrorChannel, SessionOwnerChannel } from "./pi/mirror-agent.js";
+import { MirrorAgent } from "./pi/mirror-agent.js";
 import { getModel, getModels, getProviders, ModelConfiguration } from "./pi/models.js";
 import { navigationSteeringGate } from "./pi/navigation-steering.js";
 import { applyModelSelection, DEFAULT_MODELS, resolveInitialModel } from "./pi/selection.js";
@@ -68,14 +48,34 @@ import { createExtractDocumentTool } from "./tools/extract-document.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
 import { AskUserWhichElementTool, skillTool } from "./tools/index.js";
 import { NativeInputEventsRuntimeProvider } from "./tools/NativeInputEventsRuntimeProvider.js";
-import { isToolNavigating, NavigateTool } from "./tools/navigate.js";
+import { NavigateTool } from "./tools/navigate.js";
 import { registerOverlayAbortHandler } from "./tools/repl/overlay-abort.js";
 import { createReplTool } from "./tools/repl/repl.js";
 import { BrowserJsRuntimeProvider, NavigateRuntimeProvider } from "./tools/repl/runtime-providers.js";
 import * as port from "./utils/port.js";
 import "./utils/i18n-extension.js";
 import "./utils/live-reload.js";
-import { tutorials } from "./tutorials.js";
+import {
+	adoptStartupSession,
+	applyTitle,
+	claimBackgroundLock,
+	closeMirror,
+	ensureOwnerRunScope,
+	isMirror,
+	openMirror,
+} from "./sidepanel/session-mirror.js";
+import {
+	bindPanelTab,
+	bindSessionPanel,
+	installSessionTabListeners,
+	loadSession,
+	newSession,
+	newSessionInNewTab,
+	rememberSessionInUrl,
+	resolveRunTab,
+	scopeNewSession,
+	updateGroupTitle,
+} from "./sidepanel/session-scope.js";
 
 // Register custom message renderers
 registerNavigationRenderer();
@@ -112,286 +112,6 @@ let currentWindowId: number;
 let currentTabId: number | undefined;
 /** Session id to adopt for a not-yet-saved session (promoted mirror). */
 let pendingSessionId: string | undefined;
-/** Session this tab's panel is registered for as a group tab, if any. */
-let groupPanelSessionId: string | undefined;
-/** Set while this panel mirrors a session whose agent runs in another panel. */
-let mirrorChannel: SessionMirrorChannel | undefined;
-let ownerChannel: SessionOwnerChannel | undefined;
-let ownedSessionId: string | undefined;
-
-const isMirror = (): boolean => mirrorChannel !== undefined;
-
-/**
- * Become the session's owner: the panel holding the Web Lock runs the agent.
- * The lock is held for the document's lifetime and released by Chrome when
- * the document goes away, which is what lets a mirror take over.
- */
-let releaseOwnerLockFn: (() => void) | undefined;
-
-function holdOwnerLock(sessionId: string): Promise<void> {
-	ownedSessionId = sessionId;
-	return new Promise<void>((release) => {
-		releaseOwnerLockFn = release;
-	});
-}
-
-function releaseOwnerLock(): void {
-	releaseOwnerLockFn?.();
-	releaseOwnerLockFn = undefined;
-	ownedSessionId = undefined;
-}
-
-function acquireOwnerLock(sessionId: string): Promise<boolean> {
-	if (ownedSessionId === sessionId) return Promise.resolve(true);
-	return new Promise((resolve) => {
-		navigator.locks
-			.request(sessionOwnerLockName(sessionId), { ifAvailable: true }, (lock) => {
-				if (!lock) {
-					resolve(false);
-					return undefined;
-				}
-				resolve(true);
-				return holdOwnerLock(sessionId);
-			})
-			.catch((err) => {
-				console.warn("[Sidepanel] Owner lock request failed:", err);
-				resolve(false);
-			});
-	});
-}
-
-function startOwnerChannel(sessionId: string): void {
-	if (!ownerChannel) {
-		ownerChannel = new SessionOwnerChannel(sessionChannelName(sessionId), {
-			title: () => currentTitle,
-			prompt: (input, images) => promptFromMirror(input, images),
-			setModel: (model) => {
-				agent.setModel(model);
-				updateAuthLabel().catch(() => {});
-				chatPanel.agentInterface?.requestUpdate();
-				renderApp();
-			},
-			setTitle: (title) => {
-				void applyTitle(title);
-			},
-		});
-	}
-	ownerChannel.attach(agent);
-}
-
-/** Background session lock; a dead previous owner's stale scope is cleared once. */
-async function claimBackgroundLock(sessionId: string): Promise<boolean> {
-	const request = { type: "acquireLock", sessionId, windowId: currentWindowId } as const;
-	const first = await port.sendMessage(request);
-	if (first.success || ownedSessionId !== sessionId) return first.success;
-	// Holding the owner lock proves no other panel runs this session; the
-	// recorded bound tab is alive but its panel is gone.
-	await port.sendMessage({ type: "releaseTabScope", sessionId }).catch(() => {});
-	return (await port.sendMessage(request)).success;
-}
-
-async function applyTitle(title: string): Promise<void> {
-	currentTitle = title;
-	if (storage.sessions && currentSessionId) {
-		await storage.sessions.updateTitle(currentSessionId, title).catch(() => {});
-	}
-	void updateGroupTitle();
-	ownerChannel?.broadcastSnapshot();
-	renderApp();
-}
-
-/** The group is the session's visible handle in the tab strip: name it after the chat. */
-async function updateGroupTitle(): Promise<void> {
-	const groupId = getCurrentScope()?.groupId;
-	if (groupId === undefined || !currentTitle) return;
-	try {
-		await chrome.tabGroups.update(groupId, { title: currentTitle });
-	} catch {
-		// Title is cosmetic; the group may be gone.
-	}
-}
-
-/**
- * Give the session its own background worker tab inside its own tab group
- * (M2/M4). The bound (panel) tab is never grouped and never acted on: the
- * agent works only on the worker tab and later tabs opened in the group.
- * Never throws: failures fall back to legacy window-scoped behavior.
- */
-async function ensureSessionScope(
-	sessionId: string,
-	boundTabId: number,
-	options: { focusNewWorker?: boolean } = {},
-): Promise<void> {
-	try {
-		if (!(await isTabScopeEnabled())) return;
-		// One tab group per session: reuse the persistently assigned group
-		// when it is still alive. A new group is created only when the
-		// recorded group is gone. The assignment survives session switches;
-		// only the panel binding is released on switch.
-		const readAssignment = async (): Promise<number | undefined> => {
-			try {
-				const stored = await chrome.storage.session.get(TAB_GROUPS_KEY);
-				const assignments = (stored[TAB_GROUPS_KEY] as Record<string, { groupId: number }>) || {};
-				return assignments[sessionId]?.groupId;
-			} catch {
-				return undefined;
-			}
-		};
-		const clearAssignment = async (): Promise<void> => {
-			try {
-				const stored = await chrome.storage.session.get(TAB_GROUPS_KEY);
-				const assignments = ((stored[TAB_GROUPS_KEY] as Record<string, { groupId: number }>) || {}) as Record<
-					string,
-					{ groupId: number }
-				>;
-				if (assignments[sessionId] !== undefined) {
-					delete assignments[sessionId];
-					await chrome.storage.session.set({ [TAB_GROUPS_KEY]: assignments });
-				}
-			} catch {
-				// Best effort.
-			}
-		};
-		const saveAssignment = async (groupId: number): Promise<void> => {
-			try {
-				const stored = await chrome.storage.session.get(TAB_GROUPS_KEY);
-				const assignments = ((stored[TAB_GROUPS_KEY] as Record<string, { groupId: number }>) || {}) as Record<
-					string,
-					{ groupId: number }
-				>;
-				assignments[sessionId] = { groupId };
-				await chrome.storage.session.set({ [TAB_GROUPS_KEY]: assignments });
-			} catch (err) {
-				console.warn("[Sidepanel] Failed to save tab group assignment:", err);
-			}
-		};
-		const assignedGroupId = await readAssignment();
-		if (assignedGroupId !== undefined) {
-			try {
-				await chrome.tabGroups.get(assignedGroupId);
-				// Every member is a work tab. The panel's own tab is a member
-				// only when it is a group tab hosting the session's panel.
-				const live = await getGroupTabIds(assignedGroupId);
-				if (live.length > 0) {
-					let acting = live[0];
-					try {
-						const existing = await port.sendMessage({ type: "getTabScopes" });
-						const recorded = existing.scopes[sessionId]?.actingTabId;
-						if (recorded !== undefined && live.includes(recorded)) acting = recorded;
-					} catch {
-						// Fall through with the first live tab.
-					}
-					const request: port.AcquireTabScopeMessage = {
-						type: "acquireTabScope",
-						sessionId,
-						tabId: boundTabId,
-						windowId: currentWindowId,
-						actingTabId: acting,
-						groupId: assignedGroupId,
-					};
-					const acquired = await port.sendMessage(request);
-					const tabIds = new Set<number>(live);
-					for (const id of acquired.tabIds) {
-						if (id !== boundTabId) tabIds.add(id);
-					}
-					setCurrentScope({
-						sessionId,
-						tabIds,
-						groupId: acquired.groupId ?? assignedGroupId,
-						boundTabId,
-						actingTabId: acting,
-					});
-					for (const id of live) await attachPanelToTab(id, sessionId);
-					void updateGroupTitle();
-					return;
-				}
-			} catch {
-				// Assigned group is gone; fall through and spawn a fresh one.
-			}
-			await clearAssignment();
-		}
-		// Spawn a dedicated inactive worker tab, never touching the user's tab.
-		const worker = await createTabInScope();
-		if (worker.id === undefined) {
-			console.warn("[Sidepanel] Worker tab has no id; staying window-scoped");
-			return;
-		}
-		let groupId: number | undefined;
-		try {
-			groupId = await ensureGroupForTabs([worker.id]);
-			try {
-				await chrome.tabGroups.update(groupId, { title: "Sitegeist" });
-			} catch {
-				// Title is cosmetic; ignore.
-			}
-		} catch (err) {
-			console.warn("[Sidepanel] Failed to group worker tab:", err);
-		}
-		if (groupId !== undefined) {
-			await saveAssignment(groupId);
-		}
-		// Register the worker's panel before anything can activate the tab.
-		await attachPanelToTab(worker.id, sessionId);
-		try {
-			const request: port.AcquireTabScopeMessage = {
-				type: "acquireTabScope",
-				sessionId,
-				tabId: boundTabId,
-				windowId: currentWindowId,
-				actingTabId: worker.id,
-				...(groupId !== undefined ? { groupId } : {}),
-			};
-			const acquired = await port.sendMessage(request);
-			const tabIds = new Set<number>([worker.id]);
-			for (const id of acquired.tabIds) {
-				if (id !== boundTabId) tabIds.add(id);
-			}
-			setCurrentScope({
-				sessionId,
-				tabIds,
-				groupId: acquired.groupId ?? groupId,
-				boundTabId,
-				actingTabId: worker.id,
-			});
-			if (groupId !== undefined && acquired.groupId === undefined) {
-				// Background reports the group dead; drop the assignment so
-				// the next ensure spawns fresh instead of reusing a corpse.
-				await clearAssignment();
-			}
-		} catch (err) {
-			console.warn("[Sidepanel] Failed to acquire tab scope:", err);
-			setCurrentScope({ sessionId, tabIds: new Set([worker.id]), groupId, boundTabId, actingTabId: worker.id });
-		}
-		void updateGroupTitle();
-		if (options.focusNewWorker && (await isFocusSessionTabEnabled())) {
-			try {
-				await chrome.tabs.update(worker.id, { active: true });
-			} catch (err) {
-				console.warn("[Sidepanel] Failed to focus session tab:", err);
-			}
-		}
-	} catch (err) {
-		console.warn("[Sidepanel] ensureSessionScope failed:", err);
-	}
-}
-
-/** Refresh the local mirror of the group membership (new tabs, user moves). */
-async function refreshScopeTabIds(): Promise<void> {
-	const scope = getCurrentScope();
-	if (!scope) return;
-	try {
-		if (!(await isTabScopeEnabled())) return;
-		if (scope.groupId === undefined) return;
-		// Group members are the work tabs; the user's own tab is never grouped.
-		const live = await getGroupTabIds(scope.groupId);
-		if (live.length === 0) return;
-		const acting = scope.actingTabId !== undefined && live.includes(scope.actingTabId) ? scope.actingTabId : live[0];
-		setCurrentScope({ ...scope, tabIds: new Set(live), actingTabId: acting });
-	} catch (err) {
-		console.warn("[Sidepanel] refreshScopeTabIds failed:", err);
-	}
-}
-
 // Track which skills we've shown in full (skillName -> lastUpdated timestamp)
 // Reset when a new session/agent is created
 const shownSkills = new Map<string, string>();
@@ -604,53 +324,12 @@ const saveSession = async () => {
 	}
 };
 
-const updateUrl = (sessionId: string) => {
-	const url = new URL(window.location.href);
-	url.searchParams.set("session", sessionId);
-	if (currentTabId !== undefined) {
-		url.searchParams.set("tabId", String(currentTabId));
-	}
-	window.history.replaceState({}, "", url);
-};
-
-/**
- * Give the session its owner lock, channel and tab group before the first
- * run starts, so the first tool call already acts inside the group.
- */
-async function ensureRunScope(): Promise<void> {
-	const sessionId = currentSessionId ?? agent.sessionId;
-	if (!sessionId) return;
-	if (getCurrentScope()?.sessionId === sessionId) return;
-	let bound = currentTabId;
-	if (bound === undefined) {
-		const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-		bound = active?.id;
-	}
-	if (bound === undefined) return;
-	currentTabId = bound;
-	if (!(await acquireOwnerLock(sessionId))) return;
-	startOwnerChannel(sessionId);
-	await ensureSessionScope(sessionId, bound, { focusNewWorker: currentSessionId === undefined });
-}
-
 /** Runs before every prompt in the owning panel, including prompts forwarded by mirrors. */
 async function prepareRun(): Promise<void> {
 	if (!agent || isMirror()) return;
 
-	// Get current tab info: the session's acting tab when tab scope is
-	// on, otherwise the legacy active tab of the current window.
-	let tab: chrome.tabs.Tab | undefined;
-	if (await isTabScopeEnabled()) {
-		await ensureRunScope();
-		await refreshScopeTabIds();
-		tab = await resolveActingTab().catch(() => undefined);
-	}
-	if (!tab) {
-		[tab] = await chrome.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-	}
+	// Flag off: the active tab. Flag on: the acting group tab, never a foreign one.
+	const tab = await resolveRunTab(() => ensureOwnerRunScope());
 	if (!tab?.url || tab.url.startsWith("chrome-extension://") || tab.url.startsWith("moz-extension://")) return;
 
 	// Find most recent navigation (either nav message or nav tool result)
@@ -661,8 +340,11 @@ async function prepareRun(): Promise<void> {
 			lastUrl = (msg as NavigationMessage).url;
 			break;
 		}
-		if (msg.role === "toolResult" && (msg as any).toolName === "navigate") {
-			lastUrl = (msg as any).details?.finalUrl;
+		if (msg.role === "toolResult" && msg.toolName === "navigate") {
+			const details = msg.details;
+			if (details && typeof details === "object" && "finalUrl" in details && typeof details.finalUrl === "string") {
+				lastUrl = details.finalUrl;
+			}
 			break;
 		}
 	}
@@ -674,93 +356,6 @@ async function prepareRun(): Promise<void> {
 	}
 }
 
-/**
- * Show a session whose agent runs in another panel. Starts from the stored
- * transcript (when saved) and follows the owner live. When the owner's
- * document goes away its Web Lock frees up and this panel takes over.
- */
-async function startMirror(sessionId: string): Promise<void> {
-	const sessionData = storage.sessions ? await storage.sessions.loadSession(sessionId).catch(() => null) : null;
-	const metadata = sessionData ? await storage.sessions.getMetadata(sessionId).catch(() => null) : null;
-	currentTitle = metadata?.title || "";
-	await createAgent(
-		sessionData
-			? {
-					systemPrompt: SYSTEM_PROMPT,
-					model: sessionData.model,
-					thinkingLevel: sessionData.thinkingLevel,
-					messages: sessionData.messages,
-					tools: [],
-				}
-			: undefined,
-		false,
-		sessionId,
-	);
-	renderApp();
-	navigator.locks
-		.request(sessionOwnerLockName(sessionId), async () => {
-			const held = holdOwnerLock(sessionId);
-			try {
-				await promoteMirror(sessionId);
-			} catch (err) {
-				console.error("[Sidepanel] Failed to take over session:", err);
-			}
-			return held;
-		})
-		.catch((err) => console.warn("[Sidepanel] Owner lock wait failed:", err));
-}
-
-/** The owning panel is gone: run the session here, from storage when saved. */
-async function promoteMirror(sessionId: string): Promise<void> {
-	const mirrored = agent.state;
-	const fallback = {
-		model: mirrored.model,
-		thinkingLevel: mirrored.thinkingLevel,
-		messages: mirrored.messages.slice(),
-	};
-	const sessionData = storage.sessions ? await storage.sessions.loadSession(sessionId).catch(() => null) : null;
-	if (sessionData) {
-		currentSessionId = sessionId;
-		const metadata = await storage.sessions.getMetadata(sessionId).catch(() => null);
-		currentTitle = metadata?.title || currentTitle;
-		await claimBackgroundLock(sessionId);
-	} else {
-		// Never saved: keep the id so the first save lands on the same session.
-		pendingSessionId = sessionId;
-	}
-	if (currentTabId !== undefined && (await isTabScopeEnabled())) {
-		await ensureSessionScope(sessionId, currentTabId);
-	}
-	const source = sessionData ?? fallback;
-	await createAgent({
-		systemPrompt: SYSTEM_PROMPT,
-		model: source.model,
-		thinkingLevel: source.thinkingLevel,
-		messages: source.messages,
-		tools: [],
-	});
-	startOwnerChannel(sessionId);
-	updateUrl(sessionId);
-	renderApp();
-}
-
-/** A mirror panel sent input; run it here, queueing behind an active run. */
-async function promptFromMirror(input: PromptInput, images?: ImageContent[]): Promise<void> {
-	if (!agent || isMirror()) return;
-	if (agent.state.isStreaming) {
-		const messages: AgentMessage[] =
-			typeof input === "string"
-				? [{ role: "user", content: [{ type: "text", text: input }, ...(images ?? [])], timestamp: Date.now() }]
-				: Array.isArray(input)
-					? input
-					: [input];
-		for (const message of messages) agent.followUp(message);
-		return;
-	}
-	await prepareRun();
-	await agent.prompt(input, images);
-}
-
 const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true, mirrorOf?: string) => {
 	// A mirror's abort would be forwarded and stop the owner's run.
 	if (!isMirror()) agent?.abort();
@@ -768,8 +363,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		agentUnsubscribe();
 		agentUnsubscribe = undefined;
 	}
-	mirrorChannel?.close();
-	mirrorChannel = undefined;
+	closeMirror();
 
 	// Mark all loaded messages as already recorded (by object identity)
 	costRecorder.seed(initialState?.messages ?? []);
@@ -798,25 +392,18 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 	);
 
 	if (mirrorOf !== undefined) {
-		mirrorChannel = new SessionMirrorChannel(
-			sessionChannelName(mirrorOf),
-			(remote) =>
-				new MirrorAgent(remote, {
-					systemPrompt: SYSTEM_PROMPT,
-					model: defaultModel,
-					thinkingLevel: initialState?.thinkingLevel ?? "medium",
-					messages: initialState?.messages ?? [],
-				}),
-		);
-		const mirrorAgent = mirrorChannel.agent;
-		mirrorAgent.title = currentTitle;
-		mirrorAgent.onChange = () => {
-			currentTitle = mirrorAgent.title;
-			chatPanel.agentInterface?.requestUpdate();
-			updateAuthLabel().catch(() => {});
-			renderApp();
-		};
-		agent = mirrorAgent;
+		agent = openMirror(mirrorOf, {
+			model: defaultModel,
+			thinkingLevel: initialState?.thinkingLevel ?? "medium",
+			messages: initialState?.messages ?? [],
+			title: currentTitle,
+			onChange: (title) => {
+				currentTitle = title;
+				chatPanel.agentInterface?.requestUpdate();
+				updateAuthLabel().catch(() => {});
+				renderApp();
+			},
+		});
 	} else {
 		agent = new Agent({
 			initialState: {
@@ -905,26 +492,8 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 						}
 					})
 					.catch(() => {});
-				updateUrl(createdSessionId);
-				// Own a tab group for the new session when tab scope is on.
-				// Usually already created before the first run (prepareRun).
-				// Falls back to the active tab when this panel has no bound tab.
-				void (async () => {
-					try {
-						if (!(await isTabScopeEnabled())) return;
-						if (getCurrentScope()?.sessionId === createdSessionId) return;
-						let bound = currentTabId;
-						if (bound === undefined) {
-							const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-							bound = active?.id;
-						}
-						if (bound === undefined) return;
-						currentTabId = bound;
-						await ensureSessionScope(createdSessionId, bound);
-					} catch (err) {
-						console.warn("[Sidepanel] Failed to scope new session:", err);
-					}
-				})();
+				rememberSessionInUrl(createdSessionId);
+				void scopeNewSession(createdSessionId);
 			}
 
 			if (currentSessionId) {
@@ -1053,67 +622,6 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			});
 		}
 	}
-};
-
-const releaseOwnScope = () => {
-	// Navigation will disconnect port and auto-release locks. Tab scopes are
-	// released explicitly so the old session is immediately adoptable. A
-	// mirror never owned the scope.
-	if (!isMirror() && currentSessionId) {
-		void port.sendMessage({ type: "releaseTabScope", sessionId: currentSessionId }).catch(() => {});
-		clearCurrentScope();
-	}
-};
-
-/** Open a fresh panel on a new tab. Must run inside a user gesture. */
-const openPanelInNewTab = async (query: string) => {
-	// Explicit user gesture: focusing the new tab is intended.
-	try {
-		const tab = await chrome.tabs.create({ active: true });
-		if (tab.id === undefined) return;
-		try {
-			await chrome.sidePanel.setOptions({
-				tabId: tab.id,
-				path: `sidepanel.html?${query}&tabId=${tab.id}`,
-				enabled: true,
-			});
-		} catch {
-			// Panel falls back to the default path without tab routing.
-		}
-		await chrome.sidePanel.open({ tabId: tab.id });
-	} catch (err) {
-		console.warn("[Sidepanel] Failed to open session in new tab:", err);
-	}
-};
-
-const loadSession = (sessionId: string) => {
-	// A group tab's panel belongs to its session; other sessions open beside it.
-	if (groupPanelSessionId !== undefined && groupPanelSessionId !== sessionId) {
-		void openPanelInNewTab(`session=${encodeURIComponent(sessionId)}`);
-		return;
-	}
-	releaseOwnScope();
-	const url = new URL(window.location.href);
-	url.searchParams.set("session", sessionId);
-	window.location.href = url.toString();
-};
-
-// Open a fresh panel on a new tab so two sessions run side by side.
-const newSessionInNewTab = () => openPanelInNewTab("new=true");
-
-const newSession = (inPlace = false) => {
-	if (!inPlace && groupPanelSessionId !== undefined) {
-		void newSessionInNewTab();
-		return;
-	}
-	releaseOwnScope();
-	const url = new URL(window.location.href);
-	const tabId = url.searchParams.get("tabId");
-	url.search = "?new=true";
-	if (tabId !== null) {
-		url.searchParams.set("tabId", tabId);
-	}
-	window.location.href = url.toString();
 };
 
 // ============================================================================
@@ -1252,72 +760,6 @@ const renderApp = () => {
 };
 
 // ============================================================================
-// TAB NAVIGATION TRACKING
-// ============================================================================
-
-// Listen for tab updates and insert navigation messages only when agent is running
-chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
-	// Only the owning panel steers its agent; mirrors only display it.
-	if (isMirror()) return;
-	// Only care about URL changes on the active tab while agent is working
-	// Ignore chrome-extension:// URLs (extension internal pages)
-	// Ignore tool-initiated navigations (handled by the navigate tool itself)
-	// Ignore tabs from other windows
-	if (
-		changeInfo.url &&
-		tab.active &&
-		tab.url &&
-		tab.windowId === currentWindowId &&
-		agent?.state.isStreaming &&
-		!tab.url.startsWith("chrome-extension://") &&
-		!tab.url.startsWith("moz-extension://") &&
-		!isToolNavigating()
-	) {
-		// Tab scope: only tabs inside the session group may steer this agent.
-		if (await isTabScopeEnabled()) {
-			const scope = getCurrentScope();
-			if (!scope || tab.id === undefined || !scope.tabIds.has(tab.id)) return;
-		}
-		const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
-		agent.steer(navMessage);
-		console.log("Queued navigation message for tab switch to", tab.url);
-	}
-});
-
-// Listen for tab activation (user switches tabs) only when agent is running
-chrome.tabs.onActivated.addListener(async (activeInfo) => {
-	// Ignore tab activations from other windows
-	if (activeInfo.windowId !== currentWindowId) return;
-
-	// Only the owning panel steers its agent; mirrors only display it.
-	// Showing a session on its group tabs needs no handling here: every
-	// group tab carries its own registered panel for the session.
-	if (isMirror()) return;
-
-	// Tab scope: track the acting tab inside the group, ignore foreign tabs.
-	if (await isTabScopeEnabled()) {
-		const scope = getCurrentScope();
-		if (!scope || !scope.tabIds.has(activeInfo.tabId)) return;
-		setActingTab(activeInfo.tabId);
-	}
-
-	const tab = await chrome.tabs.get(activeInfo.tabId);
-	// Ignore chrome-extension:// URLs (extension internal pages)
-	// Ignore tool-initiated navigations (handled by the navigate tool itself)
-	if (
-		tab.url &&
-		agent?.state.isStreaming &&
-		!tab.url.startsWith("chrome-extension://") &&
-		!tab.url.startsWith("moz-extension://") &&
-		!isToolNavigating()
-	) {
-		const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
-		agent.steer(navMessage);
-		console.log("Queued navigation message for tab switch to", tab.url);
-	}
-});
-
-// ============================================================================
 // KEYBOARD SHORTCUTS
 // ============================================================================
 window.addEventListener(
@@ -1366,7 +808,7 @@ async function testSteps(): Promise<boolean> {
 		// Set model if specified
 		let initialState: Partial<AgentState> | undefined;
 		if (testProvider && testModel) {
-			const model = getModel(testProvider as any, testModel);
+			const model = getModel(testProvider, testModel);
 			if (model) {
 				initialState = {
 					systemPrompt: SYSTEM_PROMPT,
@@ -1439,23 +881,7 @@ async function initApp() {
 
 	// Per-tab panel binding (M2): the background opens the panel for a tab
 	// with ?tabId=<id>. Without it this is a legacy window-bound panel.
-	const earlyParams = new URLSearchParams(window.location.search);
-	const tabIdParam = earlyParams.get("tabId");
-	const parsedTabId = tabIdParam !== null ? Number(tabIdParam) : NaN;
-	currentTabId = tabIdParam !== null && Number.isInteger(parsedTabId) ? parsedTabId : undefined;
-	clearCurrentScope();
-
-	// Panels opened without tab routing (e.g. extension icon) bind to the
-	// active tab when tab scope is on, so every panel owns its tab.
-	if (currentTabId === undefined && (await isTabScopeEnabled())) {
-		const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-		if (active?.id !== undefined) {
-			currentTabId = active.id;
-			const url = new URL(window.location.href);
-			url.searchParams.set("tabId", String(active.id));
-			window.history.replaceState({}, "", url);
-		}
-	}
+	currentTabId = await bindPanelTab();
 
 	// Initialize port communication system (tab-bound name when we have a tab)
 	port.initializeWithTab(currentWindowId, currentTabId);
@@ -1485,116 +911,45 @@ async function initApp() {
 		return;
 	}
 
-	// Check for session in URL
-	const urlParams = new URLSearchParams(window.location.search);
-	let sessionIdFromUrl = urlParams.get("session");
-	const explicitSession = sessionIdFromUrl !== null;
-	const isNewSession = urlParams.get("new") === "true";
-	const scopeOn = await isTabScopeEnabled();
-	if (scopeOn && currentTabId !== undefined) {
-		groupPanelSessionId = await getAttachedSession(currentTabId);
-	}
-
-	// If no session in URL and not explicitly creating new, try to load the most recent session
-	if (!sessionIdFromUrl && !isNewSession && storage.sessions) {
-		const latestSessionId = await storage.sessions.getLatestSessionId();
-		// With tab scope on, a session another panel runs is never taken over
-		// implicitly: only an explicit ?session= link mirrors it.
-		if (latestSessionId && (!scopeOn || (await acquireOwnerLock(latestSessionId)))) {
-			if (await claimBackgroundLock(latestSessionId)) {
-				sessionIdFromUrl = latestSessionId;
-				// Update URL to include the latest session
-				updateUrl(latestSessionId);
-			} else {
-				releaseOwnerLock();
-			}
-			// If lock fails, fall through to create new session
-		}
-	}
-
-	if (sessionIdFromUrl && storage.sessions) {
-		// Another panel runs this session (a group tab of a live session):
-		// show it live instead of loading a competing copy.
-		if (scopeOn && explicitSession && !(await acquireOwnerLock(sessionIdFromUrl))) {
-			await startMirror(sessionIdFromUrl);
-			return;
-		}
-		const sessionData = await storage.sessions.loadSession(sessionIdFromUrl);
-		if (sessionData) {
-			// Try to acquire lock if we don't already have it (in case user navigated directly via URL)
-			const lockSuccess = await claimBackgroundLock(sessionIdFromUrl);
-
-			if (!lockSuccess) {
-				releaseOwnerLock();
-				// This panel does not show the locked session; keep the URL honest.
-				const url = new URL(window.location.href);
-				url.searchParams.delete("session");
-				window.history.replaceState({}, "", url);
-				// Session is locked in another window - show landing page instead
-				await createAgent();
-				if (agent) {
-					const welcomeMessage = createWelcomeMessage(tutorials);
-					agent.appendMessage(welcomeMessage);
-				}
-				renderApp();
-				return;
-			}
-
-			currentSessionId = sessionIdFromUrl;
-			const metadata = await storage.sessions.getMetadata(sessionIdFromUrl);
-			currentTitle = metadata?.title || "";
-
-			// Adopt or create the session tab group for the bound tab (M2/M4).
-			if (await isTabScopeEnabled()) {
-				let bound = currentTabId;
-				if (bound === undefined) {
-					const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-					bound = active?.id;
-				}
-				if (bound !== undefined) {
-					currentTabId = bound;
-					updateUrl(sessionIdFromUrl);
-					await ensureSessionScope(sessionIdFromUrl, bound);
-				}
-			}
-
-			await createAgent({
-				systemPrompt: SYSTEM_PROMPT,
-				model: sessionData.model,
-				thinkingLevel: sessionData.thinkingLevel,
-				messages: sessionData.messages,
-				tools: [],
-			});
-			if (ownedSessionId === sessionIdFromUrl) startOwnerChannel(sessionIdFromUrl);
-
+	if (await adoptStartupSession()) {
+		// If no API keys configured, show welcome dialog, open settings, then auto-select model
+		if (!(await hasAnyApiKey())) {
+			await WelcomeSetupDialog.show();
+			await openApiKeysDialog();
+			await selectDefaultModelForAvailableProvider();
 			renderApp();
-			return;
-		} else {
-			// Session doesn't exist, redirect to new session
-			newSession(true);
-			return;
 		}
-	}
-
-	// No session - create new agent with welcome message
-	await createAgent();
-
-	// Add welcome message for new sessions
-	if (agent) {
-		const welcomeMessage = createWelcomeMessage(tutorials);
-		agent.appendMessage(welcomeMessage);
-	}
-
-	renderApp();
-
-	// If no API keys configured, show welcome dialog, open settings, then auto-select model
-	if (!(await hasAnyApiKey())) {
-		await WelcomeSetupDialog.show();
-		await openApiKeysDialog();
-		await selectDefaultModelForAvailableProvider();
-		renderApp();
 	}
 }
+
+bindSessionPanel({
+	isMirror,
+	getWindowId: () => currentWindowId,
+	getTitle: () => currentTitle,
+	setTitle: (title) => {
+		currentTitle = title;
+	},
+	getTabId: () => currentTabId,
+	setTabId: (tabId) => {
+		currentTabId = tabId;
+	},
+	getSessionId: () => currentSessionId,
+	setSessionId: (sessionId) => {
+		currentSessionId = sessionId;
+	},
+	setPendingSessionId: (sessionId) => {
+		pendingSessionId = sessionId;
+	},
+	getAgent: () => agent,
+	render: renderApp,
+	updateAuthLabel,
+	requestChatUpdate: () => {
+		chatPanel.agentInterface?.requestUpdate();
+	},
+	prepareRun,
+	createAgent,
+});
+installSessionTabListeners();
 
 // Register custom user message renderer early, before any session loads
 registerUserMessageRenderer();

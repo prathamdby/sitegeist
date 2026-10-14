@@ -215,13 +215,9 @@ export class ExtractImageTool implements AgentTool<typeof extractImageSchema, Ex
 			content.push({ type: "text", text: `Screenshot captured (max ${maxWidth}px width)` });
 		} else if (args.mode === "selector") {
 			if (!args.selector) throw new Error("selector is required for 'selector' mode");
-			let tab: chrome.tabs.Tab | undefined;
-			if (await isTabScopeEnabled()) {
-				tab = await resolveActingTab().catch(() => undefined);
-			}
-			if (!tab) {
-				[tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-			}
+			const tab = (await isTabScopeEnabled())
+				? await resolveActingTab()
+				: (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
 			if (!tab?.id) throw new Error("No active tab");
 
 			const info = await getImageInfoFromPage(tab.id, args.selector);

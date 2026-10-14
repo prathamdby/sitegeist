@@ -138,7 +138,8 @@ export async function injectOverlayForScope(taskName: string): Promise<{ tabId: 
  */
 export async function removeOverlayForActiveTab(): Promise<void> {
 	try {
-		const tabId = await getActiveTabId();
+		const tabId = (await isTabScopeEnabled()) ? (await resolveActingTab()).id : await getActiveTabId();
+		if (tabId === undefined) return;
 		await removeOverlay(tabId);
 	} catch (error) {
 		// Tab might have been closed

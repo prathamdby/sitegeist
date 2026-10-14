@@ -206,18 +206,15 @@ export const skillTool: AgentTool<typeof skillParamsSchema, any> = {
 	parameters: skillParamsSchema,
 	execute: async (_toolCallId: string, args: SkillParams, signal?: AbortSignal) => {
 		const skillsRepo = getSkills();
-		let currentUrl = "";
-		if (await isTabScopeEnabled()) {
-			const acting = await resolveActingTab().catch(() => undefined);
-			currentUrl = acting?.url || "";
-		}
-		if (!currentUrl) {
-			const [tab] = await chrome.tabs.query({
-				active: true,
-				currentWindow: true,
-			});
-			currentUrl = tab?.url || "";
-		}
+		const tab = (await isTabScopeEnabled())
+			? await resolveActingTab()
+			: (
+					await chrome.tabs.query({
+						active: true,
+						currentWindow: true,
+					})
+				)[0];
+		const currentUrl = tab?.url || "";
 
 		switch (args.action) {
 			case "get": {
