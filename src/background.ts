@@ -56,17 +56,14 @@ const TAB_SCOPES_KEY = "tab_scopes"; // sessionId -> TabScopeRecord (M2/M4)
 // Synchronously readable cache of which sidepanels are open
 // Gets populated on startup and updated by port events
 let openSidepanels = new Set<number>();
-const sessionClaimTail = new Map<string, Promise<void>>();
+let scopeWriteTail: Promise<void> = Promise.resolve();
+const mirrorProofs = new Map<string, string>();
 
-function claimSessionTurn<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
-	const previous = sessionClaimTail.get(sessionId) ?? Promise.resolve();
-	const run = previous.then(fn, fn);
-	sessionClaimTail.set(
-		sessionId,
-		run.then(
-			() => undefined,
-			() => undefined,
-		),
+function enqueueScopeWrite<T>(fn: () => Promise<T>): Promise<T> {
+	const run = scopeWriteTail.then(fn, fn);
+	scopeWriteTail = run.then(
+		() => undefined,
+		() => undefined,
 	);
 	return run;
 }
@@ -127,7 +124,7 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 			// Legacy window-bound panels keep the original window logic.
 			if (tabBoundPort) {
 				const callerTabId = tabBoundPort.tabId;
-				void claimSessionTurn(sessionId, async () => {
+				void enqueueScopeWrite(async () => {
 					const data = await chrome.storage.session.get([TAB_SCOPES_KEY, SESSION_LOCKS_KEY]);
 					const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
 						string,
@@ -160,9 +157,9 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 						return;
 					}
 					const actingTabId =
-						record !== undefined && ownerAlive && record.actingTabId !== record.boundTabId
+						record !== undefined && record.actingTabId !== callerTabId
 							? record.actingTabId
-							: callerTabId;
+							: (record?.actingTabId ?? callerTabId);
 					scopes[sessionId] = {
 						sessionId,
 						boundTabId: callerTabId,
@@ -229,11 +226,15 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 				port.postMessage(response);
 			});
 		} else if (msg.type === "acquireTabScope") {
-			void handleAcquireTabScope(port, msg, tabBoundPort?.tabId);
+			void enqueueScopeWrite(() => handleAcquireTabScope(port, msg, tabBoundPort?.tabId));
 		} else if (msg.type === "updateActingTab") {
-			void handleUpdateActingTab(port, msg);
+			void enqueueScopeWrite(() => handleUpdateActingTab(port, msg, tabBoundPort?.tabId));
 		} else if (msg.type === "releaseTabScope") {
-			void handleReleaseTabScope(port, msg, tabBoundPort?.tabId);
+			void enqueueScopeWrite(() => handleReleaseTabScope(port, msg, tabBoundPort?.tabId));
+		} else if (msg.type === "registerMirrorProof") {
+			void registerMirrorProof(port, msg, tabBoundPort?.tabId);
+		} else if (msg.type === "getMirrorProof") {
+			void sendMirrorProof(port, msg, tabBoundPort?.tabId);
 		} else if (msg.type === "getTabScopes") {
 			chrome.storage.session.get(TAB_SCOPES_KEY, (data) => {
 				const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
@@ -259,12 +260,47 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 // Clean up locks when entire window closes (belt-and-suspenders)
 chrome.windows.onRemoved.addListener((windowId: number) => {
 	closeSidepanel(windowId, false);
-	void releaseScopesForWindow(windowId);
+	void enqueueScopeWrite(() => releaseScopesForWindow(windowId));
 });
 
 // ============================================================================
 // TAB-SCOPE LIFECYCLE (M4)
 // ============================================================================
+
+async function callerIsSessionTab(sessionId: string, callerTabId: number | undefined): Promise<boolean> {
+	if (callerTabId === undefined) return false;
+	const record = (await readScopes())[sessionId];
+	if (!record) return false;
+	if (record.boundTabId === callerTabId) return true;
+	if (record.groupId === undefined) return false;
+	try {
+		const tab = await chrome.tabs.get(callerTabId);
+		return tab.groupId === record.groupId;
+	} catch {
+		return false;
+	}
+}
+
+async function registerMirrorProof(
+	port: chrome.runtime.Port,
+	msg: Extract<SidepanelToBackgroundMessage, { type: "registerMirrorProof" }>,
+	callerTabId: number | undefined,
+): Promise<void> {
+	const record = (await readScopes())[msg.sessionId];
+	const success = record !== undefined && callerTabId === record.boundTabId && msg.proof.length > 0;
+	if (success) mirrorProofs.set(msg.sessionId, msg.proof);
+	port.postMessage({ type: "mirrorProofRegistered", sessionId: msg.sessionId, success });
+}
+
+async function sendMirrorProof(
+	port: chrome.runtime.Port,
+	msg: Extract<SidepanelToBackgroundMessage, { type: "getMirrorProof" }>,
+	callerTabId: number | undefined,
+): Promise<void> {
+	const allowed = await callerIsSessionTab(msg.sessionId, callerTabId);
+	const proof = allowed ? mirrorProofs.get(msg.sessionId) : undefined;
+	port.postMessage({ type: "mirrorProof", sessionId: msg.sessionId, ...(proof !== undefined ? { proof } : {}) });
+}
 
 async function readScopes(): Promise<Record<string, TabScopeRecord>> {
 	const data = await chrome.storage.session.get(TAB_SCOPES_KEY);
@@ -343,6 +379,7 @@ async function handleAcquireTabScope(
 async function handleUpdateActingTab(
 	port: chrome.runtime.Port,
 	msg: Extract<SidepanelToBackgroundMessage, { type: "updateActingTab" }>,
+	callerTabId: number | undefined,
 ): Promise<void> {
 	const { sessionId, tabId } = msg;
 	const fail = () => {
@@ -350,7 +387,7 @@ async function handleUpdateActingTab(
 	};
 	const scopes = await readScopes();
 	const existing = scopes[sessionId];
-	if (!existing) {
+	if (!existing || callerTabId !== existing.boundTabId) {
 		fail();
 		return;
 	}
@@ -518,7 +555,7 @@ void attachAllGroupPanels();
 // Acting tab closed: fall back to the bound tab.
 chrome.tabs.onRemoved.addListener((tabId: number) => {
 	void forgetPanelForTab(tabId);
-	void (async () => {
+	void enqueueScopeWrite(async () => {
 		const scopes = await readScopes();
 		let changed = false;
 		for (const sessionId of Object.keys(scopes)) {
@@ -534,7 +571,7 @@ chrome.tabs.onRemoved.addListener((tabId: number) => {
 		if (changed) {
 			await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
 		}
-	})();
+	});
 });
 
 // Group deleted by the user: keep the binding, clear the group id so the
@@ -542,7 +579,7 @@ chrome.tabs.onRemoved.addListener((tabId: number) => {
 // persistent per-session assignment is cleared too: a new group is created
 // only when the recorded group is actually gone.
 chrome.tabGroups?.onRemoved?.addListener?.((group) => {
-	void (async () => {
+	void enqueueScopeWrite(async () => {
 		const scopes = await readScopes();
 		let changed = false;
 		for (const sessionId of Object.keys(scopes)) {
@@ -573,12 +610,12 @@ chrome.tabGroups?.onRemoved?.addListener?.((group) => {
 		} catch {
 			// Assignment cleanup is best effort.
 		}
-	})();
+	});
 });
 
 // Tab replaced (e.g. crash restore): remap bound/acting ids.
 chrome.webNavigation.onTabReplaced.addListener((details) => {
-	void (async () => {
+	void enqueueScopeWrite(async () => {
 		const scopes = await readScopes();
 		let changed = false;
 		for (const sessionId of Object.keys(scopes)) {

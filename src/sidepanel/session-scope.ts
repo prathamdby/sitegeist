@@ -156,6 +156,7 @@ export async function ensureSessionScope(
 							groupId: assignedGroupId,
 						};
 						const acquired = await port.sendMessage(request);
+						if (!acquired.success) return;
 						const tabIds = new Set<number>(live);
 						for (const id of acquired.tabIds) {
 							if (id !== boundTabId) tabIds.add(id);
@@ -209,6 +210,7 @@ export async function ensureSessionScope(
 				...(groupId !== undefined ? { groupId } : {}),
 			};
 			const acquired = await port.sendMessage(request);
+			if (!acquired.success) return;
 			const tabIds = new Set<number>([worker.id]);
 			for (const id of acquired.tabIds) {
 				if (id !== boundTabId) tabIds.add(id);

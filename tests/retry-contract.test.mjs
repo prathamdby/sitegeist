@@ -107,6 +107,22 @@ test("isThrottle429 matches throttles but never quota failures", () => {
 	assert.equal(isThrottle429("429 insufficient_quota"), false);
 });
 
+test("absent retry policy attempts a throttle once", async () => {
+	const fetchCalls = stubFetch(async () => throttleResponse());
+	const stream = createStreamFn(async () => undefined);
+	const result = await (await stream(model, requestContext(), requestOptions())).result();
+	assert.equal(result.stopReason, "error");
+	assert.equal(fetchCalls(), 1);
+	const undefinedPolicy = createStreamFn(
+		async () => undefined,
+		async () => undefined,
+	);
+	const secondCalls = stubFetch(async () => throttleResponse());
+	const second = await (await undefinedPolicy(model, requestContext(), requestOptions())).result();
+	assert.equal(second.stopReason, "error");
+	assert.equal(secondCalls(), 1);
+});
+
 test("rate-limited requests retry then stream text", async () => {
 	const fetchCalls = stubFetch(async (calls) => (calls < 3 ? throttleResponse() : successResponse(model.id)));
 	const stream = createStreamFn(

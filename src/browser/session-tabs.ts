@@ -234,7 +234,9 @@ export function chooseActingTabId(
 ): number | undefined {
 	const live = liveGroupTabIds instanceof Set ? liveGroupTabIds : new Set(liveGroupTabIds);
 	if (live.size === 0) return undefined;
-	if (scope.actingTabId !== undefined && live.has(scope.actingTabId)) return scope.actingTabId;
+	if (scope.actingTabId !== undefined && scope.actingTabId !== scope.boundTabId && live.has(scope.actingTabId)) {
+		return scope.actingTabId;
+	}
 	for (const id of live) {
 		if (id !== scope.boundTabId) return id;
 	}

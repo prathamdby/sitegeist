@@ -142,6 +142,7 @@ test("chooseActingTabId never returns a foreign id or an unbound panel tab", () 
 	assert.equal(chooseActingTabId({ actingTabId: 7, boundTabId: 7 }, [4]), 4);
 	// The bound panel tab is allowed only when it is itself in the live group.
 	assert.equal(chooseActingTabId({ actingTabId: 99, boundTabId: 7 }, [7]), 7);
+	assert.equal(chooseActingTabId({ actingTabId: 7, boundTabId: 7 }, [7, 4]), 4);
 });
 
 test("tab scope acquire rejects a live foreign owner and a mismatched port", () => {

@@ -3,7 +3,7 @@ export interface RetryPolicy {
 	delayMs: number;
 }
 
-export const DEFAULT_RETRY_POLICY: RetryPolicy = { maxRetries: 3, delayMs: 2000 };
+export const DEFAULT_RETRY_POLICY: RetryPolicy = { maxRetries: 0, delayMs: 0 };
 
 export const MAX_RETRY_POLICY_RETRIES = 10;
 export const MAX_RETRY_POLICY_DELAY_MS = 30000;

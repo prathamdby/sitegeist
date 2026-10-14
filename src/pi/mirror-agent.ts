@@ -27,12 +27,18 @@ export type PromptInput = string | AgentMessage | AgentMessage[];
 
 export type MirrorToOwnerMessage =
 	| { kind: "hello" }
-	| { kind: "prompt"; input: PromptInput; images?: ImageContent[] }
-	| { kind: "abort" }
-	| { kind: "steer"; message: AgentMessage }
-	| { kind: "model"; model: Model<Api> }
-	| { kind: "thinking"; level: ThinkingLevel }
-	| { kind: "title"; title: string };
+	| { kind: "prompt"; input: PromptInput; images?: ImageContent[]; proof?: string }
+	| { kind: "abort"; proof?: string }
+	| { kind: "steer"; message: AgentMessage; proof?: string }
+	| { kind: "model"; model: Model<Api>; proof?: string }
+	| { kind: "thinking"; level: ThinkingLevel; proof?: string }
+	| { kind: "title"; title: string; proof?: string };
+
+/** hello is public. Every other owner command needs the proof the background gave this mirror. */
+export function hasMirrorProof(message: { kind: string; proof?: string }, proof: string): boolean {
+	if (message.kind === "hello") return true;
+	return message.proof === proof && proof.length > 0;
+}
 
 export type OwnerToMirrorMessage =
 	| { kind: "snapshot"; snapshot: SessionSnapshot }
@@ -249,6 +255,7 @@ export class MirrorAgent extends Agent {
 export class SessionMirrorChannel {
 	private readonly channel: BroadcastChannel;
 	private queue: Promise<void> = Promise.resolve();
+	private proof = "";
 	readonly agent: MirrorAgent;
 
 	constructor(
@@ -259,7 +266,8 @@ export class SessionMirrorChannel {
 		this.channel = new BroadcastChannel(channelName);
 		this.agent = createAgent({
 			send: (message) => {
-				postToChannel(this.channel, message);
+				const stamped = this.proof ? { ...message, proof: this.proof } : message;
+				postToChannel(this.channel, stamped);
 			},
 		});
 		let sawSnapshot = false;
@@ -282,6 +290,10 @@ export class SessionMirrorChannel {
 		this.channel.postMessage({ kind: "hello" } satisfies MirrorToOwnerMessage);
 	}
 
+	setProof(proof: string): void {
+		this.proof = proof;
+	}
+
 	close(): void {
 		this.channel.onmessage = null;
 		this.channel.close();
@@ -300,6 +312,7 @@ export class SessionOwnerChannel {
 	private readonly channel: BroadcastChannel;
 	private agent?: Agent;
 	private unsubscribe?: () => void;
+	readonly proof = crypto.randomUUID();
 
 	constructor(
 		channelName: string,
@@ -353,7 +366,7 @@ export class SessionOwnerChannel {
 
 	private handle(message: MirrorToOwnerMessage): void {
 		const agent = this.agent;
-		if (!agent) return;
+		if (!agent || !hasMirrorProof(message, this.proof)) return;
 		switch (message.kind) {
 			case "hello":
 				this.broadcastSnapshot();

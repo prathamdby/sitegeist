@@ -60,6 +60,12 @@ export function openMirror(
 				messages: options.messages,
 			}),
 	);
+	void port
+		.sendMessage({ type: "getMirrorProof", sessionId })
+		.then((granted) => {
+			if (granted.proof) mirrorChannel?.setProof(granted.proof);
+		})
+		.catch(() => {});
 	const mirrorAgent = mirrorChannel.agent;
 	mirrorAgent.title = options.title;
 	mirrorAgent.onChange = () => {
@@ -120,6 +126,7 @@ function startOwnerChannel(sessionId: string): void {
 	}
 	const agent = host.getAgent();
 	if (agent) ownerChannel.attach(agent);
+	void port.sendMessage({ type: "registerMirrorProof", sessionId, proof: ownerChannel.proof }).catch(() => {});
 }
 
 /** Background session lock. Does not release another tab's scope. */
@@ -159,6 +166,9 @@ export async function ensureOwnerRunScope(): Promise<void> {
 	if (!(await acquireOwnerLock(sessionId))) return;
 	startOwnerChannel(sessionId);
 	await ensureSessionScope(sessionId, bound, { focusNewWorker: host.getSessionId() === undefined });
+	if (ownerChannel) {
+		void port.sendMessage({ type: "registerMirrorProof", sessionId, proof: ownerChannel.proof }).catch(() => {});
+	}
 }
 
 /**

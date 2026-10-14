@@ -347,7 +347,9 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 		// flag is on and a scope is set. Flag off or unset scope keeps legacy.
 		if (await isTabScopeEnabled()) {
 			const effective = getEffectiveScope(this.scopedTabIds, this.scopedGroupId);
-			if (effective.tabIds !== undefined) {
+			if (effective.tabIds === undefined) {
+				tabInfos = [];
+			} else {
 				tabInfos = filterTabsToScope(tabInfos, effective.tabIds);
 			}
 		}
@@ -384,9 +386,10 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 		const scoped = await isTabScopeEnabled();
 		if (scoped) {
 			const effective = getEffectiveScope(this.scopedTabIds, this.scopedGroupId);
-			if (effective.tabIds !== undefined) {
-				assertTabInScope(numericTabId, effective.tabIds);
+			if (effective.tabIds === undefined) {
+				throw new Error(`Tab ${numericTabId} is outside the session tab group`);
 			}
+			assertTabInScope(numericTabId, effective.tabIds);
 		}
 
 		// Activate the tab

@@ -433,8 +433,8 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 					return (await storage.settings.get<string>("proxy.url")) || undefined;
 				},
 				async () => ({
-					maxRetries: (await storage.settings.get<number>("retry.rateLimit.maxRetries")) ?? 3,
-					delayMs: (await storage.settings.get<number>("retry.rateLimit.delayMs")) ?? 2000,
+					maxRetries: (await storage.settings.get<number>("retry.rateLimit.maxRetries")) ?? 0,
+					delayMs: (await storage.settings.get<number>("retry.rateLimit.delayMs")) ?? 0,
 				}),
 			),
 			getApiKey: async (provider: string) => {
