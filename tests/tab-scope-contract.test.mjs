@@ -14,8 +14,10 @@ import {
 	isTabScopeEnabled,
 	isTabScopeEnabledSync,
 	mayAcquireTabScope,
+	mayGrantTabBoundLock,
 	mayReleaseTabScope,
 	mayUpdateActingTab,
+	remapReplacedTabId,
 	setActingTab,
 	setCurrentScope,
 	setTabScopeEnabledForTests,
@@ -162,6 +164,58 @@ test("tab scope release deletes only for the owner or a dead legacy binding", ()
 	assert.equal(mayReleaseTabScope(undefined, 3, true), false);
 	assert.equal(mayReleaseTabScope(undefined, 3, false), true);
 	assert.equal(mayReleaseTabScope(3, undefined, false), false);
+});
+
+test("replaced tab ids move from the discarded tab to the live tab", () => {
+	assert.equal(remapReplacedTabId(4, 4, 9), 9);
+	assert.equal(remapReplacedTabId(2, 4, 9), 2);
+	assert.equal(remapReplacedTabId(9, 4, 9), 9);
+});
+
+test("tab-bound lock grant denies a live foreign owner and an open foreign window", () => {
+	assert.equal(
+		mayGrantTabBoundLock({
+			callerTabId: 4,
+			callerWindowId: 2,
+			boundTabId: 3,
+			ownerAlive: true,
+			lockWindowId: 1,
+			lockWindowOpen: true,
+		}),
+		false,
+	);
+	assert.equal(
+		mayGrantTabBoundLock({
+			callerTabId: 4,
+			callerWindowId: 2,
+			ownerAlive: false,
+			lockWindowId: 1,
+			lockWindowOpen: true,
+		}),
+		false,
+	);
+	assert.equal(
+		mayGrantTabBoundLock({
+			callerTabId: 3,
+			callerWindowId: 2,
+			boundTabId: 3,
+			ownerAlive: true,
+			lockWindowId: 1,
+			lockWindowOpen: true,
+		}),
+		true,
+	);
+	assert.equal(
+		mayGrantTabBoundLock({
+			callerTabId: 4,
+			callerWindowId: 2,
+			boundTabId: 3,
+			ownerAlive: false,
+			lockWindowId: 1,
+			lockWindowOpen: false,
+		}),
+		true,
+	);
 });
 
 test("acting tab updates stay inside the recorded group", () => {

@@ -24,6 +24,7 @@
 
 ### Fixed
 
+- A second panel cannot take a session lock another open panel holds, a replaced tab keeps the live id, and an inactive screenshot does not detach a debugger it did not attach.
 - A session with no tab group acts on its recorded worker tab instead of throwing, and claiming a session lock no longer releases another tab's scope.
 - Bound REPL Stop messages and overlay cleanup to their originating tab and execution, rejecting stale or forged requests.
 - Quoted native-input selectors in debugger error expressions and reported missing browser-script results as execution failures.

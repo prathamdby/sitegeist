@@ -27,7 +27,6 @@ import {
 	updateGroupTitle,
 } from "./session-scope.js";
 
-let releaseOwnerLockFn: (() => void) | undefined;
 let ownedSessionId: string | undefined;
 let mirrorChannel: SessionMirrorChannel | undefined;
 let ownerChannel: SessionOwnerChannel | undefined;
@@ -76,15 +75,9 @@ export function openMirror(
  */
 function holdOwnerLock(sessionId: string): Promise<void> {
 	ownedSessionId = sessionId;
-	return new Promise<void>((release) => {
-		releaseOwnerLockFn = release;
+	return new Promise<void>(() => {
+		// Held until this document is discarded. A failed background claim must not resolve it.
 	});
-}
-
-function releaseOwnerLock(): void {
-	releaseOwnerLockFn?.();
-	releaseOwnerLockFn = undefined;
-	ownedSessionId = undefined;
 }
 
 function acquireOwnerLock(sessionId: string): Promise<boolean> {
@@ -294,8 +287,6 @@ export async function adoptStartupSession(): Promise<boolean> {
 			if (await claimBackgroundLock(latestSessionId)) {
 				sessionIdFromUrl = latestSessionId;
 				rememberSessionInUrl(latestSessionId);
-			} else {
-				releaseOwnerLock();
 			}
 		}
 	}
@@ -311,7 +302,6 @@ export async function adoptStartupSession(): Promise<boolean> {
 		if (sessionData) {
 			const lockSuccess = await claimBackgroundLock(sessionIdFromUrl);
 			if (!lockSuccess) {
-				releaseOwnerLock();
 				const url = new URL(window.location.href);
 				url.searchParams.delete("session");
 				window.history.replaceState({}, "", url);

@@ -354,6 +354,32 @@ export function mayReleaseTabScope(
  * With a group, the tab must belong to that group. Without one, only the
  * recorded acting tab id is accepted: no expansion to an arbitrary tab.
  */
+/** Old id is `replacedTabId`. The live id is `tabId`. Leave any other id unchanged. */
+export function remapReplacedTabId(current: number, replacedTabId: number, tabId: number): number {
+	return current === replacedTabId ? tabId : current;
+}
+
+/**
+ * Tab-bound lock grant. A live foreign bound tab always denies. A different
+ * window whose sidepanel is still open denies unless this caller is that
+ * live bound tab. A dead or missing owner does not by itself grant.
+ */
+export function mayGrantTabBoundLock(input: {
+	callerTabId: number;
+	callerWindowId: number;
+	boundTabId?: number;
+	ownerAlive: boolean;
+	lockWindowId?: number;
+	lockWindowOpen: boolean;
+}): boolean {
+	const callerIsBound = input.boundTabId === input.callerTabId && input.ownerAlive;
+	if (input.boundTabId !== undefined && input.boundTabId !== input.callerTabId && input.ownerAlive) return false;
+	const foreignWindowOpen =
+		input.lockWindowOpen && input.lockWindowId !== undefined && input.lockWindowId !== input.callerWindowId;
+	if (foreignWindowOpen && !callerIsBound) return false;
+	return true;
+}
+
 export function mayUpdateActingTab(
 	record: { actingTabId: number; groupId?: number },
 	tab: { id?: number; groupId?: number },

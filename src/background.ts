@@ -6,8 +6,10 @@ import {
 } from "./browser/session-panels.js";
 import {
 	mayAcquireTabScope,
+	mayGrantTabBoundLock,
 	mayReleaseTabScope,
 	mayUpdateActingTab,
+	remapReplacedTabId,
 	TAB_GROUPS_KEY,
 	TAB_SCOPE_FLAG_KEY,
 } from "./browser/session-tabs.js";
@@ -54,6 +56,20 @@ const TAB_SCOPES_KEY = "tab_scopes"; // sessionId -> TabScopeRecord (M2/M4)
 // Synchronously readable cache of which sidepanels are open
 // Gets populated on startup and updated by port events
 let openSidepanels = new Set<number>();
+const sessionClaimTail = new Map<string, Promise<void>>();
+
+function claimSessionTurn<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+	const previous = sessionClaimTail.get(sessionId) ?? Promise.resolve();
+	const run = previous.then(fn, fn);
+	sessionClaimTail.set(
+		sessionId,
+		run.then(
+			() => undefined,
+			() => undefined,
+		),
+	);
+	return run;
+}
 
 // Initialize cache from storage on startup
 chrome.storage.session.get(SIDEPANEL_OPEN_KEY, (data) => {
@@ -110,38 +126,65 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 			// window. This is what keeps two tabs' sessions independent.
 			// Legacy window-bound panels keep the original window logic.
 			if (tabBoundPort) {
-				void (async () => {
-					const data = await chrome.storage.session.get(TAB_SCOPES_KEY);
+				const callerTabId = tabBoundPort.tabId;
+				void claimSessionTurn(sessionId, async () => {
+					const data = await chrome.storage.session.get([TAB_SCOPES_KEY, SESSION_LOCKS_KEY]);
 					const scopes = ((data[TAB_SCOPES_KEY] as Record<string, TabScopeRecord>) || {}) as Record<
 						string,
 						TabScopeRecord
 					>;
-					const record = scopes[sessionId];
-					if (record && record.boundTabId !== tabBoundPort.tabId) {
-						// A dead owner must not brick the session: verify the
-						// recorded bound tab still exists before denying.
-						const ownerAlive = await chrome.tabs
-							.get(record.boundTabId)
-							.then(() => true)
-							.catch(() => false);
-						if (ownerAlive) {
-							const denied: LockResultMessage = { type: "lockResult", sessionId, success: false };
-							port.postMessage(denied);
-							return;
-						}
-						delete scopes[sessionId];
-						await chrome.storage.session.set({ [TAB_SCOPES_KEY]: scopes });
-					}
-					const lockData = await chrome.storage.session.get(SESSION_LOCKS_KEY);
-					const sessionLocks = ((lockData[SESSION_LOCKS_KEY] as Record<string, number>) || {}) as Record<
+					const sessionLocks = ((data[SESSION_LOCKS_KEY] as Record<string, number>) || {}) as Record<
 						string,
 						number
 					>;
+					const record = scopes[sessionId];
+					const ownerAlive =
+						record !== undefined &&
+						(await chrome.tabs
+							.get(record.boundTabId)
+							.then(() => true)
+							.catch(() => false));
+					const lockWindowId = sessionLocks[sessionId];
+					if (
+						!mayGrantTabBoundLock({
+							callerTabId,
+							callerWindowId: reqWindowId,
+							boundTabId: record?.boundTabId,
+							ownerAlive,
+							lockWindowId,
+							lockWindowOpen: lockWindowId !== undefined && openSidepanels.has(lockWindowId),
+						})
+					) {
+						const denied: LockResultMessage = { type: "lockResult", sessionId, success: false };
+						port.postMessage(denied);
+						return;
+					}
+					const actingTabId =
+						record !== undefined && ownerAlive && record.actingTabId !== record.boundTabId
+							? record.actingTabId
+							: callerTabId;
+					scopes[sessionId] = {
+						sessionId,
+						boundTabId: callerTabId,
+						actingTabId,
+						windowId: reqWindowId,
+						...(record?.groupId !== undefined ? { groupId: record.groupId } : {}),
+					};
 					sessionLocks[sessionId] = reqWindowId;
-					await chrome.storage.session.set({ [SESSION_LOCKS_KEY]: sessionLocks });
+					await chrome.storage.session.set({
+						[TAB_SCOPES_KEY]: scopes,
+						[SESSION_LOCKS_KEY]: sessionLocks,
+					});
+					const written = await chrome.storage.session.get(TAB_SCOPES_KEY);
+					const stored = (written[TAB_SCOPES_KEY] as Record<string, TabScopeRecord> | undefined)?.[sessionId];
+					if (stored?.boundTabId !== callerTabId) {
+						const denied: LockResultMessage = { type: "lockResult", sessionId, success: false };
+						port.postMessage(denied);
+						return;
+					}
 					const granted: LockResultMessage = { type: "lockResult", sessionId, success: true };
 					port.postMessage(granted);
-				})();
+				});
 				return;
 			}
 
@@ -540,12 +583,11 @@ chrome.webNavigation.onTabReplaced.addListener((details) => {
 		let changed = false;
 		for (const sessionId of Object.keys(scopes)) {
 			const scope = scopes[sessionId];
-			if (scope.boundTabId === details.tabId) {
-				scope.boundTabId = details.replacedTabId;
-				changed = true;
-			}
-			if (scope.actingTabId === details.tabId) {
-				scope.actingTabId = details.replacedTabId;
+			const boundTabId = remapReplacedTabId(scope.boundTabId, details.replacedTabId, details.tabId);
+			const actingTabId = remapReplacedTabId(scope.actingTabId, details.replacedTabId, details.tabId);
+			if (boundTabId !== scope.boundTabId || actingTabId !== scope.actingTabId) {
+				scope.boundTabId = boundTabId;
+				scope.actingTabId = actingTabId;
 				changed = true;
 			}
 		}

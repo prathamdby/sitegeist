@@ -156,8 +156,10 @@ async function captureScreenshot(maxWidth: number, windowId: number): Promise<Im
  * never receives pixels from a foreign tab.
  */
 async function captureInactiveTabViaDebugger(tabId: number, maxWidth: number): Promise<ImageContent> {
+	let attachedByUs = false;
 	try {
 		await chrome.debugger.attach({ tabId }, "1.3");
+		attachedByUs = true;
 	} catch (err) {
 		if (!(err instanceof Error) || !err.message?.includes("already attached")) {
 			throw err;
@@ -172,7 +174,7 @@ async function captureInactiveTabViaDebugger(tabId: number, maxWidth: number): P
 		}
 		return fetchAndResizeImage(`data:image/png;base64,${result.data}`, maxWidth);
 	} finally {
-		await chrome.debugger.detach({ tabId }).catch(() => {});
+		if (attachedByUs) await chrome.debugger.detach({ tabId }).catch(() => {});
 	}
 }
 
