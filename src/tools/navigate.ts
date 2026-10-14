@@ -2,6 +2,17 @@ import { i18n, icon } from "@mariozechner/mini-lit";
 import { html } from "lit";
 import { Loader2 } from "lucide";
 import { type Static, Type } from "typebox";
+import {
+	assertTabInScope,
+	createTabInScope,
+	filterTabsToScope,
+	getCurrentScope,
+	getEffectiveScope,
+	isTabScopeEnabled,
+	resolveActingTab,
+	setActingTab,
+	setCurrentScope,
+} from "../browser/session-tabs.js";
 import { registerToolRenderer, type ToolRenderer, type ToolRenderResult } from "../chat/renderers/index.js";
 import { SkillPill } from "../components/SkillPill.js";
 import { TabPill } from "../components/TabPill.js";
@@ -11,6 +22,7 @@ import { NAVIGATE_TOOL_DESCRIPTION } from "../prompts/prompts.js";
 import { getSitegeistStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
 import { formatSkills } from "../utils/format-skills.js";
+import * as port from "../utils/port.js";
 import "../utils/i18n-extension.js";
 
 // Track tool-initiated navigations to filter out duplicate navigation messages
@@ -69,6 +81,20 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 	description = NAVIGATE_TOOL_DESCRIPTION;
 	parameters = navigateSchema;
 
+	/**
+	 * M1 tab scope. Undefined means legacy behavior (no filtering).
+	 * Wired to the background-owned session-to-group map in M2; tests and
+	 * future callers use setScope() to opt a tool instance into scoping.
+	 * The flag gate stays off by default so unset scope changes nothing.
+	 */
+	scopedTabIds?: Set<number>;
+	scopedGroupId?: number;
+
+	setScope(tabIds: number[] | undefined, groupId?: number): void {
+		this.scopedTabIds = tabIds === undefined ? undefined : new Set(tabIds);
+		this.scopedGroupId = groupId;
+	}
+
 	async execute(
 		_toolCallId: string,
 		args: NavigateParams,
@@ -93,11 +119,19 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 			}
 		}
 
-		// Get active tab for navigation actions
-		const [tab] = await chrome.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
+		const scoped = await isTabScopeEnabled();
+		const tab = scoped
+			? await resolveActingTab()
+			: (
+					await chrome.tabs.query({
+						active: true,
+						currentWindow: true,
+					})
+				)[0];
+		if (scoped && tab?.id !== undefined) {
+			const allowed = getEffectiveScope(this.scopedTabIds, this.scopedGroupId).tabIds;
+			if (allowed !== undefined) assertTabInScope(tab.id, allowed);
+		}
 
 		if (!tab || !tab.id) {
 			throw new Error("No active tab found");
@@ -111,13 +145,9 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 			if ("url" in args && args.url !== undefined) {
 				// Check if opening in new tab
 				if ("newTab" in args && args.newTab) {
-					finalUrl = await this.openInNewTab(args.url, signal);
-					// Get the newly created tab
-					const tabs = await chrome.tabs.query({});
-					const newTab = tabs.find((t: chrome.tabs.Tab) => t.url === finalUrl);
-					if (newTab?.id) {
-						targetTabId = newTab.id;
-					}
+					const opened = await this.openInNewTab(args.url, signal);
+					finalUrl = opened.url;
+					targetTabId = opened.tabId;
 				} else {
 					// Navigate to URL in current tab
 					finalUrl = await this.navigateToUrl(tab.id, args.url, signal);
@@ -161,6 +191,7 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 			tabId: targetTabId,
 			skills,
 		};
+		setActingTab(targetTabId);
 
 		// Build output message
 		let output = "";
@@ -216,9 +247,43 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 		});
 	}
 
-	private async openInNewTab(url: string, signal?: AbortSignal): Promise<string> {
+	private async publishActingTab(tabId: number): Promise<void> {
+		const sessionId = getCurrentScope()?.sessionId;
+		if (!sessionId) return;
+		await port.sendMessage({ type: "updateActingTab", sessionId, tabId }).catch((err: unknown) => {
+			console.warn("[Navigate] Failed to publish acting tab:", err);
+		});
+	}
+
+	private async openInNewTab(url: string, signal?: AbortSignal): Promise<{ url: string; tabId: number }> {
 		if (signal?.aborted) {
 			throw new Error("Aborted");
+		}
+
+		// M1 tab scope: open inactive and group when the flag is on. The
+		// legacy path below keeps active:true so default behavior is unchanged.
+		if (await isTabScopeEnabled()) {
+			const effective = getEffectiveScope(this.scopedTabIds, this.scopedGroupId);
+			const scopedTab = await createTabInScope(url, effective.groupId);
+			const id = scopedTab.id;
+			if (id === undefined) {
+				throw new Error("Failed to create new tab");
+			}
+			const scope = getCurrentScope();
+			if (scope) {
+				setCurrentScope({
+					...scope,
+					tabIds: new Set([...scope.tabIds, id]),
+					actingTabId: id,
+				});
+			}
+			if (this.scopedTabIds) {
+				this.scopedTabIds = new Set([...this.scopedTabIds, id]);
+			}
+			setActingTab(id);
+			await this.publishActingTab(id);
+			const resolvedUrl = await this.waitForTabLoad(id, signal);
+			return { url: resolvedUrl, tabId: id };
 		}
 
 		const newTab = await chrome.tabs.create({ url, active: true });
@@ -227,6 +292,11 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 			throw new Error("Failed to create new tab");
 		}
 
+		const resolvedUrl = await this.waitForTabLoad(newTab.id, signal);
+		return { url: resolvedUrl, tabId: newTab.id };
+	}
+
+	private async waitForTabLoad(tabId: number, signal?: AbortSignal): Promise<string> {
 		// Wait for the tab to load
 		return new Promise((resolve, reject) => {
 			if (signal?.aborted) {
@@ -235,7 +305,7 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 			}
 
 			const listener = (details: chrome.webNavigation.WebNavigationFramedCallbackDetails) => {
-				if (details.tabId === newTab.id && details.frameId === 0) {
+				if (details.tabId === tabId && details.frameId === 0) {
 					chrome.webNavigation.onDOMContentLoaded.removeListener(listener);
 					if (abortListener) signal?.removeEventListener("abort", abortListener);
 					resolve(details.url);
@@ -260,7 +330,7 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 	private async listTabs(): Promise<{ content: Array<{ type: "text"; text: string }>; details: NavigateResult }> {
 		const tabs = await chrome.tabs.query({});
 
-		const tabInfos: TabInfo[] = tabs
+		let tabInfos: TabInfo[] = tabs
 			.filter(
 				(t: chrome.tabs.Tab): t is chrome.tabs.Tab & { id: number; url: string } =>
 					t.id !== undefined && t.url !== undefined,
@@ -272,6 +342,17 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 				active: t.active || false,
 				favicon: t.favIconUrl,
 			}));
+
+		// M1 tab scope: never report tabs outside the session group when the
+		// flag is on and a scope is set. Flag off or unset scope keeps legacy.
+		if (await isTabScopeEnabled()) {
+			const effective = getEffectiveScope(this.scopedTabIds, this.scopedGroupId);
+			if (effective.tabIds === undefined) {
+				tabInfos = [];
+			} else {
+				tabInfos = filterTabsToScope(tabInfos, effective.tabIds);
+			}
+		}
 
 		const details: NavigateResult = {
 			tabs: tabInfos,
@@ -301,6 +382,16 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 			throw new Error(`Tab ${numericTabId} not found`);
 		}
 
+		// Reject foreign tabs before any focus change.
+		const scoped = await isTabScopeEnabled();
+		if (scoped) {
+			const effective = getEffectiveScope(this.scopedTabIds, this.scopedGroupId);
+			if (effective.tabIds === undefined) {
+				throw new Error(`Tab ${numericTabId} is outside the session tab group`);
+			}
+			assertTabInScope(numericTabId, effective.tabIds);
+		}
+
 		// Activate the tab
 		await chrome.tabs.update(numericTabId, { active: true });
 
@@ -308,6 +399,8 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 		if (tab.windowId) {
 			await chrome.windows.update(tab.windowId, { focused: true });
 		}
+		setActingTab(numericTabId);
+		if (scoped) await this.publishActingTab(numericTabId);
 
 		const finalUrl = tab.url || "";
 		const title = tab.title || "Untitled";
@@ -439,7 +532,13 @@ export const navigateRenderer: ToolRenderer<NavigateParams, NavigateResult> = {
 						<div class="my-2 space-y-2">
 							<button
 								class="inline-flex items-center gap-2 px-3 py-2 text-sm text-card-foreground bg-card border border-border rounded-lg hover:bg-accent/50 transition-colors max-w-full cursor-pointer shadow-lg"
-								@click=${() => chrome.tabs.create({ url: finalUrl })}
+								@click=${async () => {
+									if (await isTabScopeEnabled()) {
+										await createTabInScope(finalUrl, getCurrentScope()?.groupId).catch(() => {});
+										return;
+									}
+									chrome.tabs.create({ url: finalUrl });
+								}}
 								title="${i18n("Click to open")}: ${finalUrl}"
 							>
 								<img src="${faviconUrl}" alt="" class="w-4 h-4 flex-shrink-0" />

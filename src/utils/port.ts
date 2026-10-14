@@ -31,6 +31,106 @@ export interface LockResultMessage {
 }
 
 /**
+ * Session tab-scope record owned by the background. Survives service worker
+ * sleep via chrome.storage.session (M2/M4).
+ */
+export interface TabScopeRecord {
+	sessionId: string;
+	boundTabId: number;
+	actingTabId: number;
+	windowId: number;
+	groupId?: number;
+}
+
+/**
+ * Request to acquire (or adopt) a session tab scope for a bound tab.
+ * The background verifies the tab still exists before granting.
+ */
+export interface AcquireTabScopeMessage {
+	type: "acquireTabScope";
+	sessionId: string;
+	tabId: number;
+	windowId: number;
+	groupId?: number;
+	actingTabId?: number;
+}
+
+export interface TabScopeAcquiredMessage {
+	type: "tabScopeAcquired";
+	sessionId: string;
+	success: boolean;
+	groupId?: number;
+	tabIds: number[];
+}
+
+/** Move the session's acting tab inside its scope. */
+export interface UpdateActingTabMessage {
+	type: "updateActingTab";
+	sessionId: string;
+	tabId: number;
+}
+
+export interface ActingTabUpdatedMessage {
+	type: "actingTabUpdated";
+	sessionId: string;
+	success: boolean;
+}
+
+export interface ReleaseTabScopeMessage {
+	type: "releaseTabScope";
+	sessionId: string;
+}
+
+export interface TabScopeReleasedMessage {
+	type: "tabScopeReleased";
+	sessionId: string;
+}
+
+export interface GetTabScopesMessage {
+	type: "getTabScopes";
+}
+
+export interface RegisterMirrorProofMessage {
+	type: "registerMirrorProof";
+	sessionId: string;
+	proof: string;
+}
+
+export interface MirrorProofRegisteredMessage {
+	type: "mirrorProofRegistered";
+	sessionId: string;
+	success: boolean;
+}
+
+export interface GetMirrorProofMessage {
+	type: "getMirrorProof";
+	sessionId: string;
+}
+
+export interface UpdateTabGroupMessage {
+	type: "updateTabGroup";
+	sessionId: string;
+	groupId?: number;
+}
+
+export interface TabGroupUpdatedMessage {
+	type: "tabGroupUpdated";
+	sessionId: string;
+	success: boolean;
+}
+
+export interface MirrorProofMessage {
+	type: "mirrorProof";
+	sessionId: string;
+	proof?: string;
+}
+
+export interface TabScopesMessage {
+	type: "tabScopes";
+	scopes: Record<string, TabScopeRecord>;
+}
+
+/**
  * Request to get all currently locked sessions.
  * Sent from sidepanel to background.
  */
@@ -57,7 +157,14 @@ export interface LockedSessionsMessage {
  */
 export type MessagePair =
 	| { request: AcquireLockMessage; response: LockResultMessage }
-	| { request: GetLockedSessionsMessage; response: LockedSessionsMessage };
+	| { request: GetLockedSessionsMessage; response: LockedSessionsMessage }
+	| { request: AcquireTabScopeMessage; response: TabScopeAcquiredMessage }
+	| { request: UpdateActingTabMessage; response: ActingTabUpdatedMessage }
+	| { request: ReleaseTabScopeMessage; response: TabScopeReleasedMessage }
+	| { request: GetTabScopesMessage; response: TabScopesMessage }
+	| { request: RegisterMirrorProofMessage; response: MirrorProofRegisteredMessage }
+	| { request: GetMirrorProofMessage; response: MirrorProofMessage }
+	| { request: UpdateTabGroupMessage; response: TabGroupUpdatedMessage };
 
 /**
  * All messages that can be sent from sidepanel to background.
@@ -87,6 +194,13 @@ export const REQUEST_TO_RESPONSE_TYPE: Record<
 > = {
 	acquireLock: "lockResult",
 	getLockedSessions: "lockedSessions",
+	acquireTabScope: "tabScopeAcquired",
+	updateActingTab: "actingTabUpdated",
+	releaseTabScope: "tabScopeReleased",
+	getTabScopes: "tabScopes",
+	registerMirrorProof: "mirrorProofRegistered",
+	getMirrorProof: "mirrorProof",
+	updateTabGroup: "tabGroupUpdated",
 };
 
 // ============================================================================
@@ -95,6 +209,8 @@ export const REQUEST_TO_RESPONSE_TYPE: Record<
 
 let port: chrome.runtime.Port | null = null;
 let currentWindowId: number | undefined;
+let currentTabId: number | undefined;
+let currentSessionId: string | undefined;
 const responseHandlers = new Map<string, (msg: BackgroundToSidepanelMessage) => void>();
 
 /**
@@ -103,7 +219,31 @@ const responseHandlers = new Map<string, (msg: BackgroundToSidepanelMessage) => 
  */
 export function initialize(windowId: number): void {
 	currentWindowId = windowId;
+	currentTabId = undefined;
+	currentSessionId = undefined;
 	connect();
+}
+
+/**
+ * Initialize port system with window ID plus tab binding. The background
+ * accepts both legacy (`sidepanel:<windowId>`) and tab-bound
+ * (`sidepanel:tab:<tabId>:<sessionId|->`) names through the cutover.
+ */
+export function initializeWithTab(windowId: number, tabId?: number, sessionId?: string): void {
+	currentWindowId = windowId;
+	currentTabId = tabId;
+	currentSessionId = sessionId;
+	connect();
+}
+
+function portName(): string {
+	if (currentWindowId === undefined) {
+		throw new Error("[Port] Cannot connect: windowId not initialized");
+	}
+	if (currentTabId !== undefined) {
+		return `sidepanel:tab:${currentTabId}:${currentSessionId ?? "-"}`;
+	}
+	return `sidepanel:${currentWindowId}`;
 }
 
 /**
@@ -111,12 +251,8 @@ export function initialize(windowId: number): void {
  * Background script will receive this connection via runtime.onConnect.
  */
 function connect(): chrome.runtime.Port {
-	if (!currentWindowId) {
-		throw new Error("[Port] Cannot connect: windowId not initialized");
-	}
-
 	console.log(`[Port] Connecting... (${new Date().toISOString()})`);
-	const tmpPort = chrome.runtime.connect({ name: `sidepanel:${currentWindowId}` });
+	const tmpPort = chrome.runtime.connect({ name: portName() });
 
 	// Set up message listener to dispatch responses
 	tmpPort.onMessage.addListener((msg: BackgroundToSidepanelMessage) => {

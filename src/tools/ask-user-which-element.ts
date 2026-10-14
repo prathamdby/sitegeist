@@ -3,6 +3,7 @@ import { html } from "lit";
 import { createRef, ref } from "lit/directives/ref.js";
 import { Loader2, MousePointer2 } from "lucide";
 import { type Static, Type } from "typebox";
+import { isTabScopeEnabled, resolveActingTab } from "../browser/session-tabs.js";
 import {
 	registerToolRenderer,
 	renderCollapsibleHeader,
@@ -538,11 +539,14 @@ export class AskUserWhichElementTool implements AgentTool<typeof selectElementSc
 				throw new Error("Tool execution was aborted");
 			}
 
-			// Get the active tab
-			const [tab] = await chrome.tabs.query({
-				active: true,
-				currentWindow: true,
-			});
+			const tab = (await isTabScopeEnabled())
+				? await resolveActingTab()
+				: (
+						await chrome.tabs.query({
+							active: true,
+							currentWindow: true,
+						})
+					)[0];
 
 			if (!tab || !tab.id) {
 				throw new Error("No active tab found");

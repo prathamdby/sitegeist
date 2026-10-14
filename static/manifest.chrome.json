@@ -37,6 +37,7 @@
 		"userScripts",
 		"webNavigation",
 		"debugger",
+		"tabGroups",
 		"declarativeNetRequest"
 	],
 	"host_permissions": [

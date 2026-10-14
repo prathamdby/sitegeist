@@ -17,7 +17,7 @@ import { REPL_TOOL_DESCRIPTION } from "../../prompts/prompts.js";
 import { type SandboxFile, SandboxIframe, type SandboxResult } from "../../sandbox/SandboxIframe.js";
 import type { SandboxRuntimeProvider } from "../../sandbox/types.js";
 import "../../utils/i18n-extension.js";
-import { injectOverlayForActiveTab, removeOverlay } from "./overlay-inject.js";
+import { injectOverlayForScope, removeOverlay } from "./overlay-inject.js";
 
 // Execute JavaScript code with attachments using SandboxedIframe
 export async function executeJavaScript(
@@ -62,7 +62,7 @@ export async function executeJavaScript(
 	let overlayRequestId: string | undefined;
 	if (usesBrowserjs) {
 		try {
-			const overlay = await injectOverlayForActiveTab(taskName || "Executing JavaScript");
+			const overlay = await injectOverlayForScope(taskName || "Executing JavaScript");
 			overlayTabId = overlay.tabId;
 			overlayRequestId = overlay.requestId;
 		} catch (error) {

@@ -1,3 +1,4 @@
+import { isTabScopeEnabled, resolveActingTab } from "../browser/session-tabs.js";
 import { NATIVE_INPUT_EVENTS_DESCRIPTION } from "../prompts/prompts.js";
 import type { SandboxRuntimeProvider } from "../sandbox/types.js";
 
@@ -27,11 +28,11 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 		return {};
 	}
 
-	/**
-	 * Get the currently active tab ID
-	 */
+	/** Session acting tab when tab scope is on, otherwise the active tab. */
 	private async getActiveTabId(): Promise<number> {
-		const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+		const tab = (await isTabScopeEnabled())
+			? await resolveActingTab()
+			: (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
 		if (!tab?.id) {
 			throw new Error("No active tab found");
 		}

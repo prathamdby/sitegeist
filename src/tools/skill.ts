@@ -7,6 +7,7 @@ import { html, type TemplateResult } from "lit";
 import { createRef, ref } from "lit/directives/ref.js";
 import { Sparkles } from "lucide";
 import { type Static, Type } from "typebox";
+import { isTabScopeEnabled, resolveActingTab } from "../browser/session-tabs.js";
 import {
 	registerToolRenderer,
 	renderCollapsibleHeader,
@@ -205,10 +206,14 @@ export const skillTool: AgentTool<typeof skillParamsSchema, any> = {
 	parameters: skillParamsSchema,
 	execute: async (_toolCallId: string, args: SkillParams, signal?: AbortSignal) => {
 		const skillsRepo = getSkills();
-		const [tab] = await chrome.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
+		const tab = (await isTabScopeEnabled())
+			? await resolveActingTab()
+			: (
+					await chrome.tabs.query({
+						active: true,
+						currentWindow: true,
+					})
+				)[0];
 		const currentUrl = tab?.url || "";
 
 		switch (args.action) {

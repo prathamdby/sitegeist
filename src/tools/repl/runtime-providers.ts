@@ -1,3 +1,4 @@
+import { isTabScopeEnabled, resolveActingTab } from "../../browser/session-tabs.js";
 import {
 	BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION,
 	NAVIGATE_RUNTIME_PROVIDER_DESCRIPTION,
@@ -149,7 +150,17 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 				respond({ success: false, error: apiCheck.message || "userScripts API not available" });
 				return;
 			}
-			const [tab] = await Promise.race([chrome.tabs.query({ active: true, currentWindow: true }), cancellation]);
+			// Tab scope: act on the session's acting tab inside its group,
+			// never a foreign tab. Flag off keeps the legacy active tab.
+			const [tab] = await Promise.race([
+				(async () => {
+					if (await isTabScopeEnabled()) {
+						return [await resolveActingTab()];
+					}
+					return chrome.tabs.query({ active: true, currentWindow: true });
+				})(),
+				cancellation,
+			]);
 			if (tab?.id === undefined) {
 				respond({ success: false, error: "No active tab found" });
 				return;

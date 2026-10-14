@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Introduced a flag-gated tab-scope kernel (off by default) with group-scoped tab filtering, inactive tab creation and foreign-tab rejection groundwork for background tab groups.
+- Added background tab groups: each chat can own its own tab group with a pinned panel tab (Settings → Tabs → Background tabs, off by default). New tabs open inactive in-group, list/switch are group-scoped, page tools act on the session's acting tab, and background screenshots go through the debugger protocol so foreign pixels never leak. See docs/tab-groups.md.
+- Sessions bound to one tab cannot be taken by another tab's panel, and the header pop-out button opens a fresh panel on a new tab so two sessions run side by side. Switching sessions releases the scope for adoption elsewhere.
+- One tab group per session: the group assignment persists across switches and a new group is created only when the recorded group is gone.
+- Rate-limit retries: provider 429s retry up to 3 times with a fixed delay (Settings → Retry, off with 0). Quota-exhaustion and non-429 errors surface immediately.
+- Clicking a tab in a session group reveals that session's panel, or adopts the session when its panel is gone. Agent-driven tab switches never trigger this; streaming panels stay put silently.
+
 ### Changed
 
 - Migrated the agent runtime and model/auth registry to `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` 1.1.0, retaining the existing UI and stored data formats.
@@ -15,6 +24,14 @@
 
 ### Fixed
 
+- A second panel cannot take a session lock another open panel holds, a replaced tab keeps the live id, and an inactive screenshot does not detach a debugger it did not attach.
+- Absent retry settings do not retry, a missing tab scope lists no tabs, and a mirror command needs a proof the background issued.
+- A failed tab-scope acquire does not install a local scope, including when the background message throws.
+- Mirror proof is issued only to the bound tab, and a panel only receives scope records for sessions it owns.
+- A denied tab-scope acquire removes the worker tab it just created instead of leaving the group behind.
+- A tab-bound panel marks its window open before a lock grant, and a stashed session loads only in the tab that wrote it.
+- Mirror proofs survive service-worker sleep, and tab-group assignment writes go through one background queue.
+- A session with no tab group acts on its recorded worker tab instead of throwing, and claiming a session lock no longer releases another tab's scope.
 - Bound REPL Stop messages and overlay cleanup to their originating tab and execution, rejecting stale or forged requests.
 - Quoted native-input selectors in debugger error expressions and reported missing browser-script results as execution failures.
 - Enforced read-only artifact access from isolated HTML previews and excluded failed artifact operations from session restoration.

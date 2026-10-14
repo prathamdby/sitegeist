@@ -5,9 +5,11 @@ import i18n from "@mariozechner/mini-lit/dist/i18n.js";
 import Fuse from "fuse.js";
 import { html } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { TAB_GROUPS_KEY } from "../browser/session-tabs.js";
 import { formatUsage } from "../chat/format.js";
 import { getAppStorage } from "../storage/app-storage.js";
 import type { SessionData, SessionMetadata } from "../storage/types.js";
+import type { TabScopeRecord } from "../utils/port.js";
 import * as port from "../utils/port.js";
 
 type ExportedSession = {
@@ -20,7 +22,10 @@ export class SitegeistSessionListDialog extends DialogBase {
 	@state() private sessions: SessionMetadata[] = [];
 	@state() private loading = true;
 	@state() private sessionLocks: Record<string, number> = {}; // sessionId -> windowId
+	@state() private tabScopes: Record<string, TabScopeRecord> = {}; // sessionId -> tab scope
+	@state() private tabGroups: Record<string, { groupId: number }> = {}; // sessionId -> persistent group assignment
 	@state() private currentWindowId: number | undefined;
+	@state() private currentTabId: number | undefined;
 	@state() private searchQuery = "";
 	@state() private showDeleteMenu = false;
 
@@ -66,6 +71,11 @@ export class SitegeistSessionListDialog extends DialogBase {
 			const currentWindow = await chrome.windows.getCurrent();
 			this.currentWindowId = currentWindow.id;
 
+			// This panel's bound tab, if tab-routed (?tabId=)
+			const tabIdParam = new URLSearchParams(window.location.search).get("tabId");
+			const parsed = tabIdParam !== null ? Number(tabIdParam) : NaN;
+			this.currentTabId = tabIdParam !== null && Number.isInteger(parsed) ? parsed : undefined;
+
 			// Load sessions (already sorted by lastModified index)
 			const storage = getAppStorage();
 			this.sessions = await storage.sessions.getAllMetadata();
@@ -73,10 +83,31 @@ export class SitegeistSessionListDialog extends DialogBase {
 			// Get lock information from background via port
 			const lockResponse = await port.sendMessage({ type: "getLockedSessions" });
 			this.sessionLocks = lockResponse.locks || {};
+
+			// Get tab-scope information (best effort: older workers may not answer)
+			try {
+				const scopeResponse = await port.sendMessage({ type: "getTabScopes" });
+				this.tabScopes = scopeResponse.scopes || {};
+			} catch {
+				this.tabScopes = {};
+			}
+
+			// Get persistent group assignments (best effort)
+			try {
+				const stored = await chrome.storage.session.get(TAB_GROUPS_KEY);
+				this.tabGroups = ((stored[TAB_GROUPS_KEY] as Record<string, { groupId: number }>) || {}) as Record<
+					string,
+					{ groupId: number }
+				>;
+			} catch {
+				this.tabGroups = {};
+			}
 		} catch (err) {
 			console.error("Failed to load sessions:", err);
 			this.sessions = [];
 			this.sessionLocks = {};
+			this.tabScopes = {};
+			this.tabGroups = {};
 		} finally {
 			this.loading = false;
 		}
@@ -140,14 +171,34 @@ export class SitegeistSessionListDialog extends DialogBase {
 		return date.toLocaleDateString();
 	}
 
+	/** The session this panel shows, owned here or mirrored from another tab's panel. */
+	private shownSessionId(): string | null {
+		return new URLSearchParams(window.location.search).get("session");
+	}
+
 	private isSessionLocked(sessionId: string): boolean {
+		if (sessionId === this.shownSessionId()) return false;
 		const lockWindowId = this.sessionLocks[sessionId];
-		return lockWindowId !== undefined && lockWindowId !== this.currentWindowId;
+		if (lockWindowId !== undefined && lockWindowId !== this.currentWindowId) return true;
+		// A session bound to another tab's panel is not selectable here.
+		const scope = this.tabScopes[sessionId];
+		if (scope !== undefined && this.currentTabId !== undefined && scope.boundTabId !== this.currentTabId) {
+			return true;
+		}
+		return false;
 	}
 
 	private isCurrentSession(sessionId: string): boolean {
+		if (sessionId === this.shownSessionId()) return true;
 		const lockWindowId = this.sessionLocks[sessionId];
-		return lockWindowId !== undefined && lockWindowId === this.currentWindowId;
+		if (lockWindowId !== undefined && lockWindowId === this.currentWindowId) {
+			const scope = this.tabScopes[sessionId];
+			if (scope !== undefined && this.currentTabId !== undefined && scope.boundTabId !== this.currentTabId) {
+				return false;
+			}
+			return true;
+		}
+		return false;
 	}
 
 	private async handleExport(sessionId?: string) {
@@ -521,6 +572,14 @@ export class SitegeistSessionListDialog extends DialogBase {
 																		${i18n("Locked")}
 																	</span>`
 																	: ""
+														}
+														${
+															this.tabScopes[session.id]?.groupId !== undefined ||
+															this.tabGroups[session.id]?.groupId !== undefined
+																? html`<span class="px-2 py-0.5 text-xs rounded-full bg-secondary text-secondary-foreground font-medium shrink-0">
+																		${i18n("Tab group")}
+																	</span>`
+																: ""
 														}
 													</div>
 

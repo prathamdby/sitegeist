@@ -3,7 +3,7 @@ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
 import { html, render } from "lit";
-import { History, Plus, Settings } from "lucide";
+import { History, Plus, Settings, SquareArrowOutUpRight } from "lucide";
 import { ChatPanel } from "./chat/ChatPanel.js";
 import { setShowJsonMode } from "./chat/renderers/index.js";
 import { Toast } from "./components/Toast.js";
@@ -14,7 +14,7 @@ import { CostsTab } from "./dialogs/CostsTab.js";
 import { ModelSelector } from "./dialogs/ModelSelector.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
 import { SitegeistSessionListDialog } from "./dialogs/SessionListDialog.js";
-import { ProxyTab, SettingsDialog } from "./dialogs/SettingsDialog.js";
+import { ProxyTab, RetryTab, SettingsDialog, TabsTab } from "./dialogs/SettingsDialog.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
 import { UserScriptsPermissionDialog } from "./dialogs/UserScriptsPermissionDialog.js";
 import { WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
@@ -25,7 +25,7 @@ import {
 	registerNavigationRenderer,
 } from "./messages/NavigationMessage.js";
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
-import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
+import { registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
 import { isOAuthCredentials, resolveApiKey } from "./oauth/index.js";
 import {
 	Agent,
@@ -36,6 +36,7 @@ import {
 	executableTool,
 } from "./pi/agent.js";
 import { CostRecorder } from "./pi/costs.js";
+import { MirrorAgent } from "./pi/mirror-agent.js";
 import { getModel, getModels, getProviders, ModelConfiguration } from "./pi/models.js";
 import { navigationSteeringGate } from "./pi/navigation-steering.js";
 import { applyModelSelection, DEFAULT_MODELS, resolveInitialModel } from "./pi/selection.js";
@@ -47,14 +48,34 @@ import { createExtractDocumentTool } from "./tools/extract-document.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
 import { AskUserWhichElementTool, skillTool } from "./tools/index.js";
 import { NativeInputEventsRuntimeProvider } from "./tools/NativeInputEventsRuntimeProvider.js";
-import { isToolNavigating, NavigateTool } from "./tools/navigate.js";
+import { NavigateTool } from "./tools/navigate.js";
 import { registerOverlayAbortHandler } from "./tools/repl/overlay-abort.js";
 import { createReplTool } from "./tools/repl/repl.js";
 import { BrowserJsRuntimeProvider, NavigateRuntimeProvider } from "./tools/repl/runtime-providers.js";
 import * as port from "./utils/port.js";
 import "./utils/i18n-extension.js";
 import "./utils/live-reload.js";
-import { tutorials } from "./tutorials.js";
+import {
+	adoptStartupSession,
+	applyTitle,
+	claimBackgroundLock,
+	closeMirror,
+	ensureOwnerRunScope,
+	isMirror,
+	openMirror,
+} from "./sidepanel/session-mirror.js";
+import {
+	bindPanelTab,
+	bindSessionPanel,
+	installSessionTabListeners,
+	loadSession,
+	newSession,
+	newSessionInNewTab,
+	rememberSessionInUrl,
+	resolveRunTab,
+	scopeNewSession,
+	updateGroupTitle,
+} from "./sidepanel/session-scope.js";
 
 // Register custom message renderers
 registerNavigationRenderer();
@@ -63,7 +84,8 @@ registerExtractImageRenderer();
 // Listen for abort messages from REPL overlay
 registerOverlayAbortHandler(
 	() => {
-		if (!agent?.state.isStreaming) return false;
+		// The owning panel receives the same relay and aborts its own run.
+		if (isMirror() || !agent?.state.isStreaming) return false;
 		agent.abort();
 		return true;
 	},
@@ -87,7 +109,9 @@ let agent: Agent;
 let chatPanel: ChatPanel;
 let agentUnsubscribe: (() => void) | undefined;
 let currentWindowId: number;
-
+let currentTabId: number | undefined;
+/** Session id to adopt for a not-yet-saved session (promoted mirror). */
+let pendingSessionId: string | undefined;
 // Track which skills we've shown in full (skillName -> lastUpdated timestamp)
 // Reset when a new session/agent is created
 const shownSkills = new Map<string, string>();
@@ -153,7 +177,15 @@ async function hasAnyApiKey(): Promise<boolean> {
 function openApiKeysDialog(): Promise<void> {
 	return new Promise((resolve) => {
 		SettingsDialog.open(
-			[new ApiKeysOAuthTab(), new CostsTab(), new SkillsTab(), new ProxyTab(), new AboutTab()],
+			[
+				new ApiKeysOAuthTab(),
+				new CostsTab(),
+				new SkillsTab(),
+				new ProxyTab(),
+				new TabsTab(),
+				new RetryTab(),
+				new AboutTab(),
+			],
 			resolve,
 		);
 	});
@@ -292,17 +324,46 @@ const saveSession = async () => {
 	}
 };
 
-const updateUrl = (sessionId: string) => {
-	const url = new URL(window.location.href);
-	url.searchParams.set("session", sessionId);
-	window.history.replaceState({}, "", url);
-};
+/** Runs before every prompt in the owning panel, including prompts forwarded by mirrors. */
+async function prepareRun(): Promise<void> {
+	if (!agent || isMirror()) return;
 
-const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true) => {
-	agent?.abort();
+	// Flag off: the active tab. Flag on: the acting group tab, never a foreign one.
+	const tab = await resolveRunTab(() => ensureOwnerRunScope());
+	if (!tab?.url || tab.url.startsWith("chrome-extension://") || tab.url.startsWith("moz-extension://")) return;
+
+	// Find most recent navigation (either nav message or nav tool result)
+	let lastUrl: string | undefined;
+	for (let i = agent.state.messages.length - 1; i >= 0; i--) {
+		const msg = agent.state.messages[i];
+		if (msg.role === "navigation") {
+			lastUrl = (msg as NavigationMessage).url;
+			break;
+		}
+		if (msg.role === "toolResult" && msg.toolName === "navigate") {
+			const details = msg.details;
+			if (details && typeof details === "object" && "finalUrl" in details && typeof details.finalUrl === "string") {
+				lastUrl = details.finalUrl;
+			}
+			break;
+		}
+	}
+
+	// Only add if URL changed
+	if (!lastUrl || lastUrl !== tab.url) {
+		const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
+		agent.appendMessage(navMessage);
+	}
+}
+
+const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true, mirrorOf?: string) => {
+	// A mirror's abort would be forwarded and stop the owner's run.
+	if (!isMirror()) agent?.abort();
 	if (agentUnsubscribe) {
 		agentUnsubscribe();
+		agentUnsubscribe = undefined;
 	}
+	closeMirror();
 
 	// Mark all loaded messages as already recorded (by object identity)
 	costRecorder.seed(initialState?.messages ?? []);
@@ -330,41 +391,62 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		await getProvidersWithKeys(),
 	);
 
-	agent = new Agent({
-		initialState: {
-			systemPrompt: SYSTEM_PROMPT,
-			thinkingLevel: "medium",
-			messages: [],
-			tools: [],
-			...initialState,
+	if (mirrorOf !== undefined) {
+		agent = openMirror(mirrorOf, {
 			model: defaultModel,
-		},
-		convertToLlm: browserMessageTransformer,
-		toolExecution: "sequential",
-		// OpenCode Go requires a per-conversation routing id (x-opencode-session).
-		// Use the persisted session id once minted, or an ephemeral one for the
-		// first turn of a not-yet-saved session; it is synced below on save.
-		sessionId: currentSessionId ?? crypto.randomUUID(),
-		beforeToolCall: async () => navigationSteeringGate(agent),
-		prepareRequest: async ({ model }) => {
-			const resolved = await modelConfiguration.resolveModel(model);
-			if (!resolved) throw new Error("The selected model is no longer configured. Select a model again.");
-			return { model: resolved };
-		},
-		streamFn: createStreamFn(async () => {
-			const enabled = await storage.settings.get<boolean>("proxy.enabled");
-			if (!enabled) return undefined;
-			return (await storage.settings.get<string>("proxy.url")) || undefined;
-		}),
-		getApiKey: async (provider: string) => {
-			const customProvider = await modelConfiguration.getProvider(provider);
-			const stored = (await storage.providerKeys.get(provider)) ?? customProvider?.apiKey;
-			if (!stored) return undefined;
-			const proxyEnabled = await storage.settings.get<boolean>("proxy.enabled");
-			const proxyUrl = proxyEnabled ? (await storage.settings.get<string>("proxy.url")) || undefined : undefined;
-			return resolveApiKey(stored, provider, storage.providerKeys, proxyUrl);
-		},
-	});
+			thinkingLevel: initialState?.thinkingLevel ?? "medium",
+			messages: initialState?.messages ?? [],
+			title: currentTitle,
+			onChange: (title) => {
+				currentTitle = title;
+				chatPanel.agentInterface?.requestUpdate();
+				updateAuthLabel().catch(() => {});
+				renderApp();
+			},
+		});
+	} else {
+		agent = new Agent({
+			initialState: {
+				systemPrompt: SYSTEM_PROMPT,
+				thinkingLevel: "medium",
+				messages: [],
+				tools: [],
+				...initialState,
+				model: defaultModel,
+			},
+			convertToLlm: browserMessageTransformer,
+			toolExecution: "sequential",
+			// OpenCode Go requires a per-conversation routing id (x-opencode-session).
+			// Use the persisted session id once minted, or an ephemeral one for the
+			// first turn of a not-yet-saved session; it is synced below on save.
+			sessionId: currentSessionId ?? pendingSessionId ?? crypto.randomUUID(),
+			beforeToolCall: async () => navigationSteeringGate(agent),
+			prepareRequest: async ({ model }) => {
+				const resolved = await modelConfiguration.resolveModel(model);
+				if (!resolved) throw new Error("The selected model is no longer configured. Select a model again.");
+				return { model: resolved };
+			},
+			streamFn: createStreamFn(
+				async () => {
+					const enabled = await storage.settings.get<boolean>("proxy.enabled");
+					if (!enabled) return undefined;
+					return (await storage.settings.get<string>("proxy.url")) || undefined;
+				},
+				async () => ({
+					maxRetries: (await storage.settings.get<number>("retry.rateLimit.maxRetries")) ?? 0,
+					delayMs: (await storage.settings.get<number>("retry.rateLimit.delayMs")) ?? 0,
+				}),
+			),
+			getApiKey: async (provider: string) => {
+				const customProvider = await modelConfiguration.getProvider(provider);
+				const stored = (await storage.providerKeys.get(provider)) ?? customProvider?.apiKey;
+				if (!stored) return undefined;
+				const proxyEnabled = await storage.settings.get<boolean>("proxy.enabled");
+				const proxyUrl = proxyEnabled ? (await storage.settings.get<string>("proxy.url")) || undefined : undefined;
+				return resolveApiKey(stored, provider, storage.providerKeys, proxyUrl);
+			},
+		});
+	}
 
 	await updateAuthLabel();
 
@@ -392,6 +474,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 			if (!currentTitle && shouldSaveSession(messages)) {
 				currentTitle = generateTitle(messages);
+				void updateGroupTitle();
 			}
 
 			if (!currentSessionId && shouldSaveSession(messages)) {
@@ -399,19 +482,18 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 				// first turn and later turns present one id to the provider.
 				currentSessionId = agent.sessionId ?? crypto.randomUUID();
 				agent.sessionId = currentSessionId;
+				pendingSessionId = undefined;
 
-				port
-					.sendMessage({
-						type: "acquireLock",
-						sessionId: currentSessionId,
-						windowId: currentWindowId,
-					})
-					.then((lockResponse) => {
-						if (!lockResponse.success) {
-							console.warn("Failed to acquire lock for newly created session", currentSessionId);
+				const createdSessionId = currentSessionId;
+				claimBackgroundLock(createdSessionId)
+					.then((success) => {
+						if (!success) {
+							console.warn("Failed to acquire lock for newly created session", createdSessionId);
 						}
-					});
-				updateUrl(currentSessionId);
+					})
+					.catch(() => {});
+				rememberSessionInUrl(createdSessionId);
+				void scopeNewSession(createdSessionId);
 			}
 
 			if (currentSessionId) {
@@ -457,36 +539,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 				providers,
 			);
 		},
-		onBeforeSend: async () => {
-			if (!agent) return;
-
-			// Get current tab info
-			const [tab] = await chrome.tabs.query({
-				active: true,
-				currentWindow: true,
-			});
-			if (!tab?.url || tab.url.startsWith("chrome-extension://") || tab.url.startsWith("moz-extension://")) return;
-
-			// Find most recent navigation (either nav message or nav tool result)
-			let lastUrl: string | undefined;
-			for (let i = agent.state.messages.length - 1; i >= 0; i--) {
-				const msg = agent.state.messages[i];
-				if (msg.role === "navigation") {
-					lastUrl = (msg as NavigationMessage).url;
-					break;
-				}
-				if (msg.role === "toolResult" && (msg as any).toolName === "navigate") {
-					lastUrl = (msg as any).details?.finalUrl;
-					break;
-				}
-			}
-
-			// Only add if URL changed
-			if (!lastUrl || lastUrl !== tab.url) {
-				const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
-				agent.appendMessage(navMessage);
-			}
-		},
+		onBeforeSend: () => prepareRun(),
 		onCostClick: () => {
 			if (!agent) return;
 			SessionCostDialog.open(agent.state.messages);
@@ -494,6 +547,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		toolsFactory: (_agent, _agentInterface, _artifactsPanel, runtimeProvidersFactory) => {
 			const navigateTool = new NavigateTool();
 			const selectElementTool = new AskUserWhichElementTool();
+			// Tab scope is resolved live from the current session scope
+			// (see getEffectiveScope): no per-tool snapshot needed, so late
+			// group changes are picked up without recreating the agent.
 
 			// Create extract_document tool with CORS proxy from settings (loaded above)
 			const extractDocumentTool = createExtractDocumentTool();
@@ -568,20 +624,6 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 	}
 };
 
-const loadSession = (sessionId: string) => {
-	// Navigation will disconnect port and auto-release locks
-	const url = new URL(window.location.href);
-	url.searchParams.set("session", sessionId);
-	window.location.href = url.toString();
-};
-
-const newSession = () => {
-	// Navigation will disconnect port and auto-release locks
-	const url = new URL(window.location.href);
-	url.search = "?new=true";
-	window.location.href = url.toString();
-};
-
 // ============================================================================
 // RENDER
 // ============================================================================
@@ -614,8 +656,17 @@ const renderApp = () => {
 						variant: "ghost",
 						size: "sm",
 						children: icon(Plus, "sm"),
-						onClick: newSession,
+						onClick: () => newSession(),
 						title: "New Session",
+					})}
+					${Button({
+						variant: "ghost",
+						size: "sm",
+						children: icon(SquareArrowOutUpRight, "sm"),
+						onClick: () => {
+							void newSessionInNewTab();
+						},
+						title: "New session in new tab",
 					})}
 
 					${
@@ -640,9 +691,14 @@ const renderApp = () => {
 										onKeyDown: async (e: KeyboardEvent) => {
 											if (e.key === "Enter") {
 												const newTitle = (e.target as HTMLInputElement).value.trim();
-												if (newTitle && newTitle !== currentTitle && storage.sessions && currentSessionId) {
-													await storage.sessions.updateTitle(currentSessionId, newTitle);
-													currentTitle = newTitle;
+												if (newTitle && newTitle !== currentTitle) {
+													if (agent instanceof MirrorAgent) {
+														// The owner saves the session; a local write would be overwritten.
+														currentTitle = newTitle;
+														agent.setTitle(newTitle);
+													} else if (storage.sessions && currentSessionId) {
+														await applyTitle(newTitle);
+													}
 												}
 												isEditingTitle = false;
 												renderApp();
@@ -686,6 +742,8 @@ const renderApp = () => {
 								new CostsTab(),
 								new SkillsTab(),
 								new ProxyTab(),
+								new TabsTab(),
+								new RetryTab(),
 								new AboutTab(),
 							]),
 						title: "Settings",
@@ -700,53 +758,6 @@ const renderApp = () => {
 
 	render(appHtml, document.body);
 };
-
-// ============================================================================
-// TAB NAVIGATION TRACKING
-// ============================================================================
-
-// Listen for tab updates and insert navigation messages only when agent is running
-chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
-	// Only care about URL changes on the active tab while agent is working
-	// Ignore chrome-extension:// URLs (extension internal pages)
-	// Ignore tool-initiated navigations (handled by the navigate tool itself)
-	// Ignore tabs from other windows
-	if (
-		changeInfo.url &&
-		tab.active &&
-		tab.url &&
-		tab.windowId === currentWindowId &&
-		agent?.state.isStreaming &&
-		!tab.url.startsWith("chrome-extension://") &&
-		!tab.url.startsWith("moz-extension://") &&
-		!isToolNavigating()
-	) {
-		const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
-		agent.steer(navMessage);
-		console.log("Queued navigation message for tab switch to", tab.url);
-	}
-});
-
-// Listen for tab activation (user switches tabs) only when agent is running
-chrome.tabs.onActivated.addListener(async (activeInfo) => {
-	// Ignore tab activations from other windows
-	if (activeInfo.windowId !== currentWindowId) return;
-
-	const tab = await chrome.tabs.get(activeInfo.tabId);
-	// Ignore chrome-extension:// URLs (extension internal pages)
-	// Ignore tool-initiated navigations (handled by the navigate tool itself)
-	if (
-		tab.url &&
-		agent?.state.isStreaming &&
-		!tab.url.startsWith("chrome-extension://") &&
-		!tab.url.startsWith("moz-extension://") &&
-		!isToolNavigating()
-	) {
-		const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
-		agent.steer(navMessage);
-		console.log("Queued navigation message for tab switch to", tab.url);
-	}
-});
 
 // ============================================================================
 // KEYBOARD SHORTCUTS
@@ -797,7 +808,7 @@ async function testSteps(): Promise<boolean> {
 		// Set model if specified
 		let initialState: Partial<AgentState> | undefined;
 		if (testProvider && testModel) {
-			const model = getModel(testProvider as any, testModel);
+			const model = getModel(testProvider, testModel);
 			if (model) {
 				initialState = {
 					systemPrompt: SYSTEM_PROMPT,
@@ -868,8 +879,12 @@ async function initApp() {
 	}
 	currentWindowId = currentWindow.id;
 
-	// Initialize port communication system
-	port.initialize(currentWindowId);
+	// Per-tab panel binding (M2): the background opens the panel for a tab
+	// with ?tabId=<id>. Without it this is a legacy window-bound panel.
+	currentTabId = await bindPanelTab();
+
+	// Initialize port communication system (tab-bound name when we have a tab)
+	port.initializeWithTab(currentWindowId, currentTabId);
 
 	// TODO reenable Request persistent storage
 	// if (storage.sessions) {
@@ -896,92 +911,45 @@ async function initApp() {
 		return;
 	}
 
-	// Check for session in URL
-	const urlParams = new URLSearchParams(window.location.search);
-	let sessionIdFromUrl = urlParams.get("session");
-	const isNewSession = urlParams.get("new") === "true";
-
-	// If no session in URL and not explicitly creating new, try to load the most recent session
-	if (!sessionIdFromUrl && !isNewSession && storage.sessions) {
-		const latestSessionId = await storage.sessions.getLatestSessionId();
-		if (latestSessionId) {
-			// Try to acquire lock for latest session
-			const lockResponse = await port.sendMessage({
-				type: "acquireLock",
-				sessionId: latestSessionId,
-				windowId: currentWindowId,
-			});
-
-			if (lockResponse.success) {
-				sessionIdFromUrl = latestSessionId;
-				// Update URL to include the latest session
-				updateUrl(latestSessionId);
-			}
-			// If lock fails, fall through to create new session
-		}
-	}
-
-	if (sessionIdFromUrl && storage.sessions) {
-		const sessionData = await storage.sessions.loadSession(sessionIdFromUrl);
-		if (sessionData) {
-			// Try to acquire lock if we don't already have it (in case user navigated directly via URL)
-			const lockResponse = await port.sendMessage({
-				type: "acquireLock",
-				sessionId: sessionIdFromUrl,
-				windowId: currentWindowId,
-			});
-
-			if (!lockResponse.success) {
-				// Session is locked in another window - show landing page instead
-				await createAgent();
-				if (agent) {
-					const welcomeMessage = createWelcomeMessage(tutorials);
-					agent.appendMessage(welcomeMessage);
-				}
-				renderApp();
-				return;
-			}
-
-			currentSessionId = sessionIdFromUrl;
-			const metadata = await storage.sessions.getMetadata(sessionIdFromUrl);
-			currentTitle = metadata?.title || "";
-
-			await createAgent({
-				systemPrompt: SYSTEM_PROMPT,
-				model: sessionData.model,
-				thinkingLevel: sessionData.thinkingLevel,
-				messages: sessionData.messages,
-				tools: [],
-			});
-
+	if (await adoptStartupSession()) {
+		// If no API keys configured, show welcome dialog, open settings, then auto-select model
+		if (!(await hasAnyApiKey())) {
+			await WelcomeSetupDialog.show();
+			await openApiKeysDialog();
+			await selectDefaultModelForAvailableProvider();
 			renderApp();
-			return;
-		} else {
-			// Session doesn't exist, redirect to new session
-			newSession();
-			return;
 		}
-	}
-
-	// No session - create new agent with welcome message
-	await createAgent();
-
-	// Add welcome message for new sessions
-	if (agent) {
-		const welcomeMessage = createWelcomeMessage(tutorials);
-		agent.appendMessage(welcomeMessage);
-	}
-
-	renderApp();
-
-	// If no API keys configured, show welcome dialog, open settings, then auto-select model
-	if (!(await hasAnyApiKey())) {
-		await WelcomeSetupDialog.show();
-		await openApiKeysDialog();
-		await selectDefaultModelForAvailableProvider();
-		renderApp();
 	}
 }
+
+bindSessionPanel({
+	isMirror,
+	getWindowId: () => currentWindowId,
+	getTitle: () => currentTitle,
+	setTitle: (title) => {
+		currentTitle = title;
+	},
+	getTabId: () => currentTabId,
+	setTabId: (tabId) => {
+		currentTabId = tabId;
+	},
+	getSessionId: () => currentSessionId,
+	setSessionId: (sessionId) => {
+		currentSessionId = sessionId;
+	},
+	setPendingSessionId: (sessionId) => {
+		pendingSessionId = sessionId;
+	},
+	getAgent: () => agent,
+	render: renderApp,
+	updateAuthLabel,
+	requestChatUpdate: () => {
+		chatPanel.agentInterface?.requestUpdate();
+	},
+	prepareRun,
+	createAgent,
+});
+installSessionTabListeners();
 
 // Register custom user message renderer early, before any session loads
 registerUserMessageRenderer();
